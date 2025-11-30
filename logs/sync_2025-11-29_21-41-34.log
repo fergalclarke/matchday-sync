@@ -1,0 +1,42 @@
+==== Matchday sync started at Sat 29 Nov 2025 21:41:34 GMT ====
+[INFO] Running football sync...
+[INFO] Fetching fixtures from 2025-11-26 to 2025-12-29
+[INFO] League 357 season 2025: fetched 0 fixtures
+[INFO] League 39 season 2025: fetched 60 fixtures
+[INFO] League 2 season 2025: fetched 27 fixtures
+[INFO] League 3 season 2025: fetched 36 fixtures
+[INFO] Total fixtures fetched: 123
+[INFO] Normalised fixtures: 123
+[INFO] Existing Airtable records found: 123
+[INFO] To create: 0, to update: 123
+[INFO] Updated 10 records
+[INFO] Updated 10 records
+[INFO] Updated 10 records
+[INFO] Updated 10 records
+[INFO] Updated 10 records
+[INFO] Updated 10 records
+[INFO] Updated 10 records
+[INFO] Updated 10 records
+[INFO] Updated 10 records
+[INFO] Updated 10 records
+[INFO] Updated 10 records
+[INFO] Updated 10 records
+[INFO] Updated 3 records
+[DONE] Sync complete.
+[INFO] Running rugby sync...
+[INFO] /fixtures/30/2025: fetched 238 fixtures
+[INFO] /fixtures/1464/2026: fetched 63 fixtures
+[INFO] /fixtures/1236/2026: fetched 151 fixtures
+[INFO] Total rugby fixtures fetched: 452
+[INFO] Normalised rugby fixtures: 45
+[INFO] Existing Airtable rugby records: 45
+[INFO] Rugby to create: 0, Rugby to update: 45
+[DONE] Rugby sync complete.
+[INFO] Running GAA sync...
+[INFO] Loaded 1 GAA fixtures from /Users/fergalclarke/gaa_data/gaa_data/gaa_scrape/gaa_scrape/matches.json
+[INFO] Normalised GAA fixtures: 1
+[INFO] Existing Airtable GAA records: 0
+[INFO] GAA to create: 1, GAA to update: 0
+[INFO] Created 1 GAA records
+[DONE] GAA sync complete.
+==== Matchday sync finished at Sat 29 Nov 2025 21:41:57 GMT ====
