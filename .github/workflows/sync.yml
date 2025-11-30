@@ -1,0 +1,38 @@
+name: Matchday Fixture Sync
+
+on:
+  schedule:
+    - cron: "0 5 * * 1"    # Run every Monday at 05:00 UTC
+  workflow_dispatch:       # Allow manual trigger
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v3
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install deps
+      run: |
+        pip install requests backports.zoneinfo
+
+    - name: Set env vars
+      run: |
+        echo "AIRTABLE_API_KEY=${{ secrets.AIRTABLE_API_KEY }}" >> $GITHUB_ENV
+        echo "RAPIDAPI_KEY=${{ secrets.RAPIDAPI_KEY }}" >> $GITHUB_ENV
+        echo "AIRTABLE_BASE_ID=${{ secrets.AIRTABLE_BASE_ID }}" >> $GITHUB_ENV
+
+    - name: Football sync
+      run: python sync_fixtures_to_airtable.py
+
+    - name: Rugby sync
+      run: python sync_rugby_to_airtable.py
+
+
+
