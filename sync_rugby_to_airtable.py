@@ -217,7 +217,7 @@ def upsert_to_airtable(records):
         fid = r["FixtureID"]
 
         if fid in existing:
-            # Do NOT overwrite TV on updates
+            # Do NOT overwrite TV on update
             update_fields = r.copy()
             update_fields.pop("TV", None)
 
@@ -226,13 +226,14 @@ def upsert_to_airtable(records):
                 "fields": update_fields
             })
         else:
-            # Allow TV on create
+            # On create, include TV
             to_create.append(r)
 
     print(f"[INFO] Rugby to create: {len(to_create)}, Rugby to update: {len(to_update)}")
 
     if to_create:
         airtable_create(to_create)
+
     if to_update:
         airtable_update(to_update)
 
