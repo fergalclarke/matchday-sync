@@ -4,7 +4,12 @@
 # https://docs.scrapy.org/en/latest/topics/items.html
 # gaa_scrape/spiders/gaa_spider.py
 import scrapy
-from gaa_scrape.items import MatchItem
+try:
+    # Original import (works in your local project structure)
+    from gaa_scrape.items import MatchItem
+except ModuleNotFoundError:
+    # Fallback for the GitHub Actions project layout, where the package is named gaa_data
+    from gaa_data.items import MatchItem
 
 class GaaSpider(scrapy.Spider):
     name = 'gaa_matches'
