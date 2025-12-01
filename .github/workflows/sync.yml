@@ -20,7 +20,7 @@ jobs:
 
     - name: Install deps
       run: |
-        pip install requests backports.zoneinfo
+        pip install requests
 
     - name: Set env vars
       run: |
