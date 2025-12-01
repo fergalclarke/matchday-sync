@@ -34,5 +34,14 @@ jobs:
     - name: Rugby sync
       run: python sync_rugby_to_airtable.py
 
+    - name: Run GAA Scrapy spider
+      working-directory: ./gaa_scrape
+      run: |
+        scrapy crawl gaa_matches -o ../matches.json
+
+    - name: GAA sync
+      run: python sync_gaa_to_airtable.py
+
+
 
 
