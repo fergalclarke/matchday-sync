@@ -20,7 +20,7 @@ jobs:
 
     - name: Install deps
       run: |
-        pip install requests
+        pip install requests scrapy
 
     - name: Set env vars
       run: |
