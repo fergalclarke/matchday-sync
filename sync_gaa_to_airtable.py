@@ -3,6 +3,7 @@ import json
 import requests
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from pathlib import Path
 
 # =========================
 # CONFIG
@@ -13,7 +14,8 @@ AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID")
 AIRTABLE_TABLE_NAME = "Fixtures"
 
 LOCAL_TZ = ZoneInfo("Europe/Dublin")
-GAA_JSON_FILE = "/Users/fergalclarke/gaa_data/gaa_data/gaa_scrape/gaa_scrape/matches.json" # output from Scrapy
+BASE_DIR = Path(__file__).parent
+GAA_JSON_FILE = BASE_DIR / "matches.json"
 
 # Sport label for all GAA fixtures
 GAA_SPORT_LABEL = "GAA"
@@ -32,16 +34,17 @@ def chunked(iterable, size):
 # LOAD & NORMALISE JSON
 # =========================
 
-def load_gaa_fixtures_from_json(path: str):
-    if not os.path.exists(path):
+def load_gaa_fixtures_from_json(path: Path):
+    if not path.exists():
         print(f"[ERROR] JSON file not found: {path}")
         return []
 
-    with open(path, "r", encoding="utf-8") as f:
+    with path.open("r", encoding="utf-8") as f:
         data = json.load(f)
 
     print(f"[INFO] Loaded {len(data)} GAA fixtures from {path}")
     return data
+
 
 
 def normalise_gaa_fixture(raw):
