@@ -24,7 +24,7 @@ class GaaSpider(scrapy.Spider):
             item['team_away'] = match.css('.gar-match-item__team.-away .gar-match-item__team-name::text').get()
             item['match_time'] = match.css('.gar-match-item__upcoming::text').get()
             item['venue'] = match.css('.gar-match-item__venue::text').get().strip('Venue: ')
-            item['referee'] = match.css('.gar-match-item__referee::text').get().strip('Referee: ')
+            # item['referee'] = match.css('.gar-match-item__referee::text').get().strip('Referee: ')
             item['team_home_logo'] = match.css('.gar-match-item__team.-home img::attr(src)').get()
             item['broadcasting'] = match.css('.gar-match-item__tv-provider img::attr(alt)').get()  # Add this line
             yield item
