@@ -15,7 +15,7 @@ AIRTABLE_TABLE_NAME = "Fixtures"
 
 LOCAL_TZ = ZoneInfo("Europe/Dublin")
 BASE_DIR = Path(__file__).parent
-GAA_JSON_FILE = BASE_DIR / "matches.json"
+GAA_JSON_FILE = BASE_DIR / "gaa_data" / "gaa_data" / "gaa_scrape" / "matches.json"
 
 # Sport label for all GAA fixtures
 GAA_SPORT_LABEL = "GAA"
@@ -35,6 +35,8 @@ def chunked(iterable, size):
 # =========================
 
 def load_gaa_fixtures_from_json(path: Path):
+    path = Path(path)
+
     if not path.exists():
         print(f"[ERROR] JSON file not found: {path}")
         return []
@@ -42,35 +44,36 @@ def load_gaa_fixtures_from_json(path: Path):
     with path.open("r", encoding="utf-8") as f:
         data = json.load(f)
 
+    if isinstance(data, dict):
+        data = [data]
+
     print(f"[INFO] Loaded {len(data)} GAA fixtures from {path}")
     return data
 
 
+def normalise_gaa_fixture(raw: dict):
+    """
+    raw already matches the JSON from the GAA spider:
+    FixtureID, Date, Time, Sport, TeamA, TeamB, Venue, TV
+    """
 
-def normalise_gaa_fixture(raw):
     fixture_id = raw.get("FixtureID")
     date_str = raw.get("Date")
-    time_str = raw.get("Time")
 
     if not fixture_id or not date_str:
         return None
 
-    # Prefix to avoid clashes
-    fixture_id_out = f"GAA-{fixture_id}"
+    # Trim ISO datetime -> date (YYYY-MM-DD)
+    if "T" in date_str:
+        date_out = date_str.split("T", 1)[0]
+    else:
+        date_out = date_str
 
-    # Parse ISO date if possible
-    date_out = date_str
-    try:
-        dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-        date_out = dt.date().isoformat()  # yyyy-mm-dd
-    except Exception:
-        pass
+    time_out = raw.get("Time") or ""
 
-    # Normalise time (can be TBC or actual)
-    time_out = time_str or ""
-
-    # Determine the Sport field from GroupName
-    group = (raw.get("GroupName") or "").lower()
+    # Map long competition name -> Gaelic / Hurling / GAA
+    sport_src = raw.get("Sport") or ""
+    group = sport_src.lower()
 
     if "football" in group:
         sport = "Gaelic"
@@ -79,13 +82,13 @@ def normalise_gaa_fixture(raw):
     else:
         sport = "GAA"
 
-    team_a = raw.get("TeamA", "")
-    team_b = raw.get("TeamB", "")
+    team_a = raw.get("TeamA") or ""
+    team_b = raw.get("TeamB") or ""
     venue = raw.get("Venue") or ""
     tv = raw.get("TV") or ""
 
-    fields = {
-        "FixtureID": fixture_id_out,
+    return {
+        "FixtureID": f"GAA-{fixture_id}",  # Prefix to keep IDs unique
         "Date": date_out,
         "Time": time_out,
         "Sport": sport,
@@ -95,27 +98,22 @@ def normalise_gaa_fixture(raw):
         "Venue": venue,
     }
 
-    return fields
+
+def normalise_all(fixtures_raw):
+    return [
+        f for f in (normalise_gaa_fixture(r) for r in fixtures_raw)
+        if f
+    ]
 
 
-def normalise_all_gaa(fixtures_raw):
-    records = []
-    seen = set()
 
-    for raw in fixtures_raw:
-        fields = normalise_gaa_fixture(raw)
-        if not fields:
-            continue
 
-        fid = fields["FixtureID"]
-        if fid in seen:
-            continue
+def normalise_all(fixtures_raw):
+    return [
+        f for f in (normalise_gaa_fixture(r) for r in fixtures_raw)
+        if f
+    ]
 
-        seen.add(fid)
-        records.append(fields)
-
-    print(f"[INFO] Normalised GAA fixtures: {len(records)}")
-    return records
 
 
 # =========================
@@ -227,12 +225,26 @@ def upsert_to_airtable(records):
 # =========================
 
 def main():
-    if not AIRTABLE_API_KEY or "YOUR_AIRTABLE_API_KEY_HERE" in AIRTABLE_API_KEY:
-        print("[ERROR] AIRTABLE_API_KEY is not set.")
-        return
+    print(f"GAA JSON Path: {GAA_JSON_FILE}")
 
     raw_fixtures = load_gaa_fixtures_from_json(GAA_JSON_FILE)
-    normalised = normalise_all_gaa(raw_fixtures)
+    if not raw_fixtures:
+        print("[INFO] No GAA fixtures to normalise.")
+        return
+
+    normalised = normalise_all(raw_fixtures)
+    print(f"[INFO] Normalised GAA fixtures: {len(normalised)}")
+
+    if not normalised:
+        print("[INFO] No GAA records to upsert.")
+        return
+
+    # 🔐 Sanity check that Airtable env vars are set
+    if not AIRTABLE_API_KEY or not AIRTABLE_BASE_ID:
+        print("[ERROR] AIRTABLE_API_KEY or AIRTABLE_BASE_ID not set.")
+        return
+
+    # 🚀 Actually write to Airtable
     upsert_to_airtable(normalised)
     print("[DONE] GAA sync complete.")
 
