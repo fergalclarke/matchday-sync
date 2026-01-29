@@ -43,6 +43,11 @@ jobs:
       run: |
         python sync_gaa_to_airtable.py
 
+    - name: LGFA sync
+      run: |
+        python sync_lgfa_to_airtable.py
+
+
 
 
 
