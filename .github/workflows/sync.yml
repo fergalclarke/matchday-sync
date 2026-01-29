@@ -22,6 +22,11 @@ jobs:
       run: |
         pip install requests scrapy
 
+    - name: Install dependencies
+      run: |
+        pip install requests beautifulsoup4
+
+
     - name: Set env vars
       run: |
         echo "AIRTABLE_API_KEY=${{ secrets.AIRTABLE_API_KEY }}" >> $GITHUB_ENV
