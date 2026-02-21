@@ -30,6 +30,33 @@ def chunked(iterable, size):
         yield iterable[i:i + size]
 
 
+def parse_yyyy_mm_dd(s: str):
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+def filter_fixtures_from_run_date(fixtures, run_dt=None):
+    run_date = (run_dt or datetime.now(LOCAL_TZ)).date()
+    kept = []
+    dropped = 0
+
+    for f in fixtures:
+        d = parse_yyyy_mm_dd(f.get("Date", ""))
+        if not d:
+            print(f"[WARN] Bad/missing Date for fixture {f.get('FixtureID')}: {f.get('Date')}")
+            continue
+
+        if d >= run_date:
+            kept.append(f)
+        else:
+            dropped += 1
+
+    print(f"[INFO] Run date (LOCAL): {run_date} | Kept: {len(kept)} | Dropped (past): {dropped}")
+    return kept
+
+
+
 # =========================
 # LOAD & NORMALISE JSON
 # =========================
@@ -97,16 +124,6 @@ def normalise_gaa_fixture(raw: dict):
         "TV": tv,
         "Venue": venue,
     }
-
-
-def normalise_all(fixtures_raw):
-    return [
-        f for f in (normalise_gaa_fixture(r) for r in fixtures_raw)
-        if f
-    ]
-
-
-
 
 def normalise_all(fixtures_raw):
     return [
@@ -234,6 +251,9 @@ def main():
 
     normalised = normalise_all(raw_fixtures)
     print(f"[INFO] Normalised GAA fixtures: {len(normalised)}")
+
+    normalised = filter_fixtures_from_run_date(normalised)
+    print(f"[INFO] Filtered GAA fixtures (>= run date): {len(normalised)}")
 
     if not normalised:
         print("[INFO] No GAA records to upsert.")
