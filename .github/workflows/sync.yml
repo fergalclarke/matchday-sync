@@ -2,7 +2,7 @@ name: Matchday Fixture Sync
 
 on:
   schedule:
-    - cron: "0 5 * * 1"    # Run every Monday at 05:00 UTC
+    - cron: "0 9 * * 4"    # Run every Thursday at 09:00 UTC
   workflow_dispatch:       # Allow manual trigger
 
 jobs:
