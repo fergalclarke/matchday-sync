@@ -33,12 +33,6 @@ jobs:
         echo "RAPIDAPI_KEY=${{ secrets.RAPIDAPI_KEY }}" >> $GITHUB_ENV
         echo "AIRTABLE_BASE_ID=${{ secrets.AIRTABLE_BASE_ID }}" >> $GITHUB_ENV
 
-    - name: Cleanup old fixtures in Airtable
-      run: python cleanup_old_fixtures_airtable.py
-      env:
-        AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
-        AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}
-
     - name: Football sync
       run: python sync_fixtures_to_airtable.py
 
