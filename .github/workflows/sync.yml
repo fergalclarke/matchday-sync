@@ -54,6 +54,12 @@ jobs:
       run: |
         python sync_gaa_to_airtable.py
 
+    - name: Cleanup old fixtures in Airtable
+      run: python cleanup_old_fixtures_airtable.py
+      env:
+        AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
+        AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}
+
 #   - name: LGFA sync
 #     run: |
 #       python sync_lgfa_to_airtable.py
