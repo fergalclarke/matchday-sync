@@ -1,6 +1,7 @@
 import os
 import json
 import requests
+import hashlib
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -20,6 +21,7 @@ GAA_JSON_FILE = BASE_DIR / "gaa_data" / "gaa_data" / "gaa_scrape" / "matches.jso
 # Sport label for all GAA fixtures
 GAA_SPORT_LABEL = "GAA"
 
+TBC_VALUE = "TBC"
 
 # =========================
 # HELPERS
@@ -57,19 +59,37 @@ def filter_fixtures_from_run_date(fixtures, run_dt=None):
     return kept
 
 
+def generate_fixture_id(raw: dict) -> str:
+    """
+    Generate a deterministic FixtureID if one is missing.
+    Uses Date + Time + TeamA + TeamB (and Sport for extra separation).
+    """
+    base = "|".join([
+        str(raw.get("Date", "")).strip(),
+        str(raw.get("Time", "")).strip(),
+        str(raw.get("TeamA", "")).strip(),
+        str(raw.get("TeamB", "")).strip(),
+        str(raw.get("Sport", "")).strip(),
+    ])
+
+    digest = hashlib.md5(base.encode("utf-8")).hexdigest()[:10]
+    return f"AUTO-{digest}"
+
+
 def normalise_tv(tv_raw: str) -> str:
     """
     Map raw TV strings to Airtable codes:
     - contains TG4  -> "TG4"
     - contains RTE/RTÉ -> "rte2"
     - contains plus -> "gaaplus"
+    - empty -> "TBC"
     """
     if not tv_raw:
-        return ""
+        return TBC_VALUE
 
     s = str(tv_raw).strip()
     if not s:
-        return ""
+        return TBC_VALUE
 
     s_lower = s.lower()
 
@@ -113,8 +133,14 @@ def normalise_gaa_fixture(raw: dict):
     fixture_id = raw.get("FixtureID")
     date_str = raw.get("Date")
 
-    if not fixture_id or not date_str:
+    # Date is required for a valid record
+    if not date_str:
         return None
+
+    # If FixtureID missing, generate one deterministically
+    if not fixture_id:
+        fixture_id = generate_fixture_id(raw)
+        print(f"[INFO] Generated FixtureID for record: {fixture_id}")
 
     # Trim ISO datetime -> date (YYYY-MM-DD)
     if "T" in date_str:
@@ -137,7 +163,9 @@ def normalise_gaa_fixture(raw: dict):
 
     team_a = raw.get("TeamA") or ""
     team_b = raw.get("TeamB") or ""
-    venue = raw.get("Venue") or ""
+
+    venue_raw = raw.get("Venue") or ""
+    venue = venue_raw.strip() if str(venue_raw).strip() else TBC_VALUE
 
     tv_raw = raw.get("TV") or ""
     tv = normalise_tv(tv_raw)
