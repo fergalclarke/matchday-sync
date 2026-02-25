@@ -36,6 +36,7 @@ def parse_yyyy_mm_dd(s: str):
     except Exception:
         return None
 
+
 def filter_fixtures_from_run_date(fixtures, run_dt=None):
     run_date = (run_dt or datetime.now(LOCAL_TZ)).date()
     kept = []
@@ -55,6 +56,31 @@ def filter_fixtures_from_run_date(fixtures, run_dt=None):
     print(f"[INFO] Run date (LOCAL): {run_date} | Kept: {len(kept)} | Dropped (past): {dropped}")
     return kept
 
+
+def normalise_tv(tv_raw: str) -> str:
+    """
+    Map raw TV strings to Airtable codes:
+    - contains TG4  -> "TG4"
+    - contains RTE/RTÉ -> "rte2"
+    - contains plus -> "gaaplus"
+    """
+    if not tv_raw:
+        return ""
+
+    s = str(tv_raw).strip()
+    if not s:
+        return ""
+
+    s_lower = s.lower()
+
+    if "tg4" in s_lower:
+        return "TG4"
+    if "rté" in s_lower or "rte" in s_lower:
+        return "rte2"
+    if "plus" in s_lower:
+        return "gaaplus"
+
+    return s  # leave as-is if no mapping matched
 
 
 # =========================
@@ -112,7 +138,9 @@ def normalise_gaa_fixture(raw: dict):
     team_a = raw.get("TeamA") or ""
     team_b = raw.get("TeamB") or ""
     venue = raw.get("Venue") or ""
-    tv = raw.get("TV") or ""
+
+    tv_raw = raw.get("TV") or ""
+    tv = normalise_tv(tv_raw)
 
     return {
         "FixtureID": f"GAA-{fixture_id}",  # Prefix to keep IDs unique
@@ -125,12 +153,12 @@ def normalise_gaa_fixture(raw: dict):
         "Venue": venue,
     }
 
+
 def normalise_all(fixtures_raw):
     return [
         f for f in (normalise_gaa_fixture(r) for r in fixtures_raw)
         if f
     ]
-
 
 
 # =========================
@@ -226,7 +254,7 @@ def upsert_to_airtable(records):
                 "fields": update_fields
             })
         else:
-            # 🟢 Keep TV on create (scraped from GAA.ie)
+            # 🟢 Keep TV on create (scraped from GAA.ie, now normalised)
             to_create.append(r)
 
     print(f"[INFO] GAA to create: {len(to_create)}, GAA to update: {len(to_update)}")
@@ -236,6 +264,7 @@ def upsert_to_airtable(records):
 
     if to_update:
         airtable_batch_update(to_update)
+
 
 # =========================
 # MAIN
