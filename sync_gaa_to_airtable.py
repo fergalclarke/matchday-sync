@@ -1,7 +1,6 @@
 import os
 import json
 import requests
-import hashlib
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -57,23 +56,6 @@ def filter_fixtures_from_run_date(fixtures, run_dt=None):
 
     print(f"[INFO] Run date (LOCAL): {run_date} | Kept: {len(kept)} | Dropped (past): {dropped}")
     return kept
-
-
-def generate_fixture_id(raw: dict) -> str:
-    """
-    Generate a deterministic FixtureID if one is missing.
-    Uses Date + Time + TeamA + TeamB (and Sport for extra separation).
-    """
-    base = "|".join([
-        str(raw.get("Date", "")).strip(),
-        str(raw.get("Time", "")).strip(),
-        str(raw.get("TeamA", "")).strip(),
-        str(raw.get("TeamB", "")).strip(),
-        str(raw.get("Sport", "")).strip(),
-    ])
-
-    digest = hashlib.md5(base.encode("utf-8")).hexdigest()[:10]
-    return f"AUTO-{digest}"
 
 
 def normalise_tv(tv_raw: str) -> str:
@@ -133,14 +115,10 @@ def normalise_gaa_fixture(raw: dict):
     fixture_id = raw.get("FixtureID")
     date_str = raw.get("Date")
 
-    # Date is required for a valid record
-    if not date_str:
+    # FixtureID + Date are required for a valid record
+    if not fixture_id or not date_str:
+        print(f"[WARN] Skipping record missing FixtureID or Date: FixtureID={fixture_id}, Date={date_str}")
         return None
-
-    # If FixtureID missing, generate one deterministically
-    if not fixture_id:
-        fixture_id = generate_fixture_id(raw)
-        print(f"[INFO] Generated FixtureID for record: {fixture_id}")
 
     # Trim ISO datetime -> date (YYYY-MM-DD)
     if "T" in date_str:
