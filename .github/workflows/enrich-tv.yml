@@ -1,0 +1,51 @@
+name: TV Enrichment
+
+on:
+  schedule:
+    # GitHub cron is UTC-only and Ireland shifts twice a year, so both slots fire
+    # and enrich_tv.py drops whichever one isn't 09:00 Europe/Dublin.
+    - cron: "0 8 * * *"    # 09:00 IST (summer)
+    - cron: "0 9 * * *"    # 09:00 GMT (winter)
+  workflow_run:
+    workflows: ["Matchday Fixture Sync"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Report changes without writing to Airtable"
+        type: boolean
+        default: true
+
+# Thursday is the collision day: the weekly sync finishes and the daily schedule
+# fires. Without this, two runs race to PATCH the same rows.
+concurrency:
+  group: enrich-tv
+  cancel-in-progress: false
+
+jobs:
+  enrich:
+    runs-on: ubuntu-latest
+    # Don't enrich off the back of a failed fixture import.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Enrich TV listings
+        run: python enrich_tv.py ${{ inputs.dry_run && '--dry-run' || '' }}
+        env:
+          AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
+          AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

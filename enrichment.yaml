@@ -1,0 +1,59 @@
+# Config for the enrich-tv stage (enrich_tv.py).
+#
+# Adding a sport = adding a block under `sports`, as long as its matching fits
+# one of the existing strategies (`teams` or `event_round`). A genuinely new
+# match shape needs a new strategy function in enrich/match.py.
+
+airtable:
+  # Base IDs are identifiers, not credentials. AIRTABLE_BASE_ID overrides this
+  # at runtime so this stage and the sync scripts always read the same value.
+  base_id: appqvIWkUegyDEI9l
+  table: Fixtures
+
+defaults:
+  window_days: 10
+  model: claude-haiku-4-5
+  max_tokens: 8000
+  name_match_threshold: 0.82
+  date_tolerance_days: 3        # near-miss window used to catch moved fixtures
+  ambiguity_margin: 0.05        # 2nd-best within this of best => ambiguous
+  max_default_writes: 12        # safety rail, mirrors MAX_AIRTABLE_DELETE
+  request_timeout: 30
+
+sports:
+  loi:
+    aliases: ["loi", "league of ireland"]
+    source:
+      # extratime.com, NOT leagueofireland.ie (that one redirect-loops bots).
+      url: https://extratime.com/fixtures/
+      max_chars: 40000
+      min_extractions: 3        # fewer than this => treat the source as failed
+    match_strategy: teams
+    select:
+      tv_is: ["TBC"]            # only fixtures still unresolved
+    writes: [TV]
+    channel_map:
+      "Virgin Media Two": vmtwo
+      "Virgin Media One": vmone
+    # The source lists terrestrial coverage only. Absence from it is a positive
+    # signal that the fixture is on LOITV, so this is applied on a clean
+    # no-match -- never on an ambiguous match, a date mismatch, or a failed fetch.
+    default_tv: loitv
+    default_tv_max_days: 10
+
+  golf:
+    aliases: ["golf"]
+    source:
+      url: https://www.skysports.com/watch/golf-on-sky
+      max_chars: 40000
+      min_extractions: 1
+    match_strategy: event_round  # TeamA holds the event, TeamB the round
+    select: all                  # every Golf row in the window, regardless of TV/Time
+    writes: [TV, Time]
+    tie_break: earliest_time     # one event airing several times in a day
+    channel_map:
+      "Sky Sports Golf": skygolf
+      "Sky Sports Main Event": skymain
+      "Sky Sports Mix": skymix
+    default_tv: null
+    default_tv_max_days: null
