@@ -14,7 +14,7 @@ schedule.
 | `sync_gaa_to_airtable.py` | `gaa_data/gaa_data/gaa_scrape/matches.json` (spider output) | Reads that JSON, maps competition name → `Gaelic`/`Hurling`/`GAA`, normalises `TV` strings into Airtable codes (`TG4`, `rte2`, `gaaplus`, else `TBC`), prefixes `FixtureID` with `GAA-`, drops anything dated before today, upserts. |
 | `sync_lgfa_to_airtable.py` | Scrapes ladiesgaelic.ie directly with `requests` + `BeautifulSoup` (no Scrapy) | Builds a deterministic `FixtureID` from date+team names, upserts. **Currently not run** — its workflow step is commented out in `sync.yml`. |
 | `cleanup_old_fixtures_airtable.py` | Airtable itself | Deletes any Airtable record where `Date` is before today (Dublin time), with a safety cap (`MAX_AIRTABLE_DELETE`, default 1000) to avoid an accidental full-table wipe. |
-| `enrich_tv.py` + `enrich/` | Broadcast sources (extratime for LoI, skysports.com for golf) | Separate daily stage — fills `TV` (and `Time`, for golf) on fixtures in the next 10 days. See "TV enrichment stage" below. |
+| `enrich_tv.py` + `enrich/` | Virgin Media TV guide (LoI), skysports.com (golf) | Separate daily stage — fills `TV` (and `Time`, for golf) on fixtures in the next 10 days. See "TV enrichment stage" below. |
 | `sync_all_sports.py` / `run_all_sports.sh` | — | Legacy **local-only** runners with hardcoded absolute paths (`/Users/fergalclarke/matchday v2`) — not used by CI, presumably for running the sync manually from a laptop/cron. Stale/unmaintained. |
 
 All the Airtable-writing scripts share the same shape: fetch/load → normalise
@@ -71,6 +71,15 @@ Per-sport rules live in `enrichment.yaml`:
 - **LoI** — candidates are rows with `TV = "TBC"`. The source lists *terrestrial*
   coverage only, so **absence from it is a positive signal**: a clean no-match
   writes `loitv`. Matched fixtures get `vmtwo`/`vmone`.
+  The source is Virgin Media's **accessible** TV guide
+  (`/access-services-tv-guide`), not `/tv-guide`. The main guide renders one day
+  only, hides the channel in an HTML attribute, and pages between days with JS
+  (no href, no date param). The accessible one is server-rendered, covers 7
+  days, and carries dates, times and channel headings as plain text.
+  It only sees 7 days, which is why `default_tv_max_days` is **6**, below the
+  10-day Airtable window — a fixture further out is missing because it is off
+  the end of the schedule, not because it is off TV. **Never raise
+  `default_tv_max_days` above the source's actual coverage.**
 - **Golf** — candidates are *every* Golf row in the window, regardless of current
   `TV`/`Time`. Sky is authoritative, so it overwrites; writes are diff-checked so
   repeat runs are no-ops, and any overwrite of a non-`TBC` value is reported

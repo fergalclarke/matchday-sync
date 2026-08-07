@@ -65,11 +65,17 @@ def _user_prompt(sport: SportConfig, page_text: str, today: dt.date, window_end:
             "and the round or day label separately."
         )
 
+    parts = [
+        f"Reference date (today): {today.isoformat()}",
+        f"Extract only listings dated {today.isoformat()} to {window_end.isoformat()} inclusive.",
+        shape,
+    ]
+    if sport.source.hint:
+        parts.append(f"\nAbout this page:\n{sport.source.hint}")
+
     return (
-        f"Reference date (today): {today.isoformat()}\n"
-        f"Extract only listings dated {today.isoformat()} to {window_end.isoformat()} inclusive.\n"
-        f"{shape}\n\n"
-        f"--- BEGIN PAGE TEXT ---\n{page_text}\n--- END PAGE TEXT ---"
+        "\n".join(parts)
+        + f"\n\n--- BEGIN PAGE TEXT ---\n{page_text}\n--- END PAGE TEXT ---"
     )
 
 

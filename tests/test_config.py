@@ -43,9 +43,23 @@ def test_shipped_config_golf_selects_everything():
 
 
 def test_shipped_config_loi_horizon():
-    loi = load_config("enrichment.yaml").sport_for("LoI")
+    """
+    The horizon is capped by what the Virgin Media guide can see (today + 6),
+    not by the 10-day Airtable window. Raising it above the source's coverage
+    would default fixtures that are merely off the end of the schedule.
+    """
+    config = load_config("enrichment.yaml")
+    loi = config.sport_for("LoI")
     assert loi.default_tv == "loitv"
-    assert loi.default_tv_max_days == 10
+    assert loi.default_tv_max_days == 6
+    assert loi.default_tv_max_days < config.window_days
+    assert loi.channel_map == {"Channel one": "vmone", "Channel two": "vmtwo"}
+
+
+def test_shipped_config_loi_has_a_layout_hint():
+    loi = load_config("enrichment.yaml").sport_for("LoI")
+    assert "Channel one" in loi.source.hint
+    assert loi.source.max_chars >= 90000  # page flattens to ~87k chars
 
 
 def test_env_overrides_base_id(monkeypatch, tmp_path):

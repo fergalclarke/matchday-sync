@@ -23,23 +23,47 @@ defaults:
 sports:
   loi:
     aliases: ["loi", "league of ireland"]
+    # Stronger model than the golf source uses, deliberately. This page is a
+    # full 7-day schedule for four channels (~560 programmes), so finding the
+    # handful of football matches is a needle-in-haystack job -- and a miss is
+    # not benign here: an overlooked Virgin Media game gets stamped `loitv`,
+    # which then drops it out of the candidate set permanently. Recall matters
+    # more than the few euro a month. Drop to claude-haiku-4-5 to economise.
+    model: claude-sonnet-5
     source:
-      # extratime.com, NOT leagueofireland.ie (that one redirect-loops bots).
-      url: https://extratime.com/fixtures/
-      max_chars: 40000
-      min_extractions: 3        # fewer than this => treat the source as failed
+      # The *accessible* guide, not /tv-guide. The main guide renders one day
+      # only, keeps the channel in an HTML attribute, and pages between days
+      # with JS (no href, no date param). This one is plain server-rendered
+      # HTML with 7 days, explicit dates/times, and channels as section
+      # headings -- everything survives a generic text reduction.
+      url: https://www.virginmediatelevision.ie/access-services-tv-guide
+      max_chars: 150000         # page flattens to ~87k chars
+      min_extractions: 1        # a quiet week may legitimately have one match
+      hint: >-
+        This is a general TV schedule for four channels, covering seven days.
+        Extract ONLY association football matches between two named teams
+        (titles look like "SSE Airtricity Men's Premier Division: Team A v
+        Team B"). Ignore every other programme.
+        Channel is a section heading, "TV Shows - Channel one" through
+        "Channel four"; each programme belongs to the most recent heading
+        above it. Report the channel as that heading's name, e.g. "Channel two".
+        Dates are day/month/year, so 7/8/26 is 7 August 2026, not 8 July.
     match_strategy: teams
     select:
       tv_is: ["TBC"]            # only fixtures still unresolved
     writes: [TV]
     channel_map:
-      "Virgin Media Two": vmtwo
-      "Virgin Media One": vmone
-    # The source lists terrestrial coverage only. Absence from it is a positive
-    # signal that the fixture is on LOITV, so this is applied on a clean
-    # no-match -- never on an ambiguous match, a date mismatch, or a failed fetch.
+      "Channel one": vmone
+      "Channel two": vmtwo
+    # The guide lists terrestrial coverage only, so absence from it means the
+    # game is on LOITV instead. Applied on a clean no-match only -- never on an
+    # ambiguous match, a date mismatch, or a failed fetch.
     default_tv: loitv
-    default_tv_max_days: 10
+    # Capped by what the source can actually see. The guide runs today + 6, so
+    # a fixture 7+ days out is missing because it is off the end of the
+    # schedule, not because it is off TV. Those stay TBC and get resolved by a
+    # later daily run as they come into range.
+    default_tv_max_days: 6
 
   golf:
     aliases: ["golf"]

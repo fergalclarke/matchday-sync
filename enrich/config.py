@@ -17,6 +17,11 @@ class SourceConfig:
     url: str
     max_chars: int
     min_extractions: int
+    # Free-text guidance appended to the extraction prompt, for pages whose
+    # layout needs explaining (where the channel lives, which listings to
+    # ignore, how dates are formatted). Keeping this in config is what lets a
+    # new source with an awkward layout be added without touching code.
+    hint: str = ""
 
 
 @dataclass
@@ -105,6 +110,7 @@ def load_config(path: str | Path = "enrichment.yaml") -> Config:
             url=_require(source_raw, "url", f"{where}.source"),
             max_chars=int(source_raw.get("max_chars", 40000)),
             min_extractions=int(source_raw.get("min_extractions", 1)),
+            hint=str(source_raw.get("hint", "") or "").strip(),
         )
 
         strategy = _require(body, "match_strategy", where)

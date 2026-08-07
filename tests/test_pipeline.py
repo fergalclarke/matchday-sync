@@ -76,21 +76,21 @@ def test_writes_matches_and_defaults(env, monkeypatch, capsys):
             away="Shamrock Rovers",
             date=(TODAY + dt.timedelta(days=2)).isoformat(),
             time="19:45",
-            channel="Virgin Media Two",
+            channel="Channel two",
         ),
         TeamListing(
             home="St Patrick's Athletic",
             away="Galway United",
             date=(TODAY + dt.timedelta(days=3)).isoformat(),
             time="19:45",
-            channel="Virgin Media One",
+            channel="Channel one",
         ),
         TeamListing(
             home="Shelbourne",
             away="Waterford",
             date=(TODAY + dt.timedelta(days=4)).isoformat(),
             time="19:45",
-            channel="Virgin Media Two",
+            channel="Channel two",
         ),
     ]
     fake = install(monkeypatch, records, listings)
@@ -114,21 +114,21 @@ def test_dry_run_writes_nothing(env, monkeypatch):
             away="Shamrock Rovers",
             date=(TODAY + dt.timedelta(days=2)).isoformat(),
             time="19:45",
-            channel="Virgin Media Two",
+            channel="Channel two",
         ),
         TeamListing(
             home="Shelbourne",
             away="Waterford",
             date=(TODAY + dt.timedelta(days=3)).isoformat(),
             time="19:45",
-            channel="Virgin Media One",
+            channel="Channel one",
         ),
         TeamListing(
             home="Derry City",
             away="Galway United",
             date=(TODAY + dt.timedelta(days=4)).isoformat(),
             time="19:45",
-            channel="Virgin Media Two",
+            channel="Channel two",
         ),
     ]
     fake = install(monkeypatch, records, listings)
@@ -155,19 +155,15 @@ def test_failed_source_touches_nothing(env, monkeypatch, capsys):
     assert "503" in capsys.readouterr().out
 
 
-def test_thin_extraction_is_treated_as_a_failed_source(env, monkeypatch):
-    """min_extractions=3 for LoI, so two listings means the scrape is suspect."""
+def test_empty_extraction_is_treated_as_a_failed_source(env, monkeypatch):
+    """
+    LoI's min_extractions is only 1 -- a quiet week can genuinely have a single
+    televised match, so the floor cannot be set high. What it does still catch
+    is the important case: the page changed and the model found nothing at all.
+    Without this, every candidate would look 'absent' and be stamped loitv.
+    """
     records = [loi_row(str(i), f"Team {i}", "Opponent") for i in range(6)]
-    listings = [
-        TeamListing(
-            home="Shelbourne",
-            away="Waterford",
-            date=(TODAY + dt.timedelta(days=4)).isoformat(),
-            time="19:45",
-            channel="Virgin Media Two",
-        )
-    ] * 2
-    fake = install(monkeypatch, records, listings)
+    fake = install(monkeypatch, records, [])
 
     assert enrich_tv.main(["--sport", "loi"]) == 1
     assert fake.patched == []
@@ -182,7 +178,7 @@ def test_max_default_writes_rail_blocks_a_mass_default(env, monkeypatch, capsys)
             away="Other Club",
             date=(TODAY + dt.timedelta(days=n)).isoformat(),
             time="19:45",
-            channel="Virgin Media Two",
+            channel="Channel two",
         )
         for n in range(1, 5)
     ]
