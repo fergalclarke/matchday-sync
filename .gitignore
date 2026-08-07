@@ -1,1 +1,5 @@
 .DS_Store
+.venv-enrich/
+__pycache__/
+*.pyc
+.pytest_cache/

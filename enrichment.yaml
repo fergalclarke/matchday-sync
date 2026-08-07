@@ -1,0 +1,83 @@
+# Config for the enrich-tv stage (enrich_tv.py).
+#
+# Adding a sport = adding a block under `sports`, as long as its matching fits
+# one of the existing strategies (`teams` or `event_round`). A genuinely new
+# match shape needs a new strategy function in enrich/match.py.
+
+airtable:
+  # Base IDs are identifiers, not credentials. AIRTABLE_BASE_ID overrides this
+  # at runtime so this stage and the sync scripts always read the same value.
+  base_id: appqvIWkUegyDEI9l
+  table: Fixtures
+
+defaults:
+  window_days: 10
+  model: claude-haiku-4-5
+  max_tokens: 8000
+  name_match_threshold: 0.82
+  date_tolerance_days: 3        # near-miss window used to catch moved fixtures
+  ambiguity_margin: 0.05        # 2nd-best within this of best => ambiguous
+  max_default_writes: 12        # safety rail, mirrors MAX_AIRTABLE_DELETE
+  request_timeout: 30
+
+sports:
+  loi:
+    aliases: ["loi", "league of ireland"]
+    # Stronger model than the golf source uses, deliberately. This page is a
+    # full 7-day schedule for four channels (~560 programmes), so finding the
+    # handful of football matches is a needle-in-haystack job -- and a miss is
+    # not benign here: an overlooked Virgin Media game gets stamped `loitv`,
+    # which then drops it out of the candidate set permanently. Recall matters
+    # more than the few euro a month. Drop to claude-haiku-4-5 to economise.
+    model: claude-sonnet-5
+    source:
+      # The *accessible* guide, not /tv-guide. The main guide renders one day
+      # only, keeps the channel in an HTML attribute, and pages between days
+      # with JS (no href, no date param). This one is plain server-rendered
+      # HTML with 7 days, explicit dates/times, and channels as section
+      # headings -- everything survives a generic text reduction.
+      url: https://www.virginmediatelevision.ie/access-services-tv-guide
+      max_chars: 150000         # page flattens to ~87k chars
+      min_extractions: 1        # a quiet week may legitimately have one match
+      hint: >-
+        This is a general TV schedule for four channels, covering seven days.
+        Extract ONLY association football matches between two named teams
+        (titles look like "SSE Airtricity Men's Premier Division: Team A v
+        Team B"). Ignore every other programme.
+        Channel is a section heading, "TV Shows - Channel one" through
+        "Channel four"; each programme belongs to the most recent heading
+        above it. Report the channel as that heading's name, e.g. "Channel two".
+        Dates are day/month/year, so 7/8/26 is 7 August 2026, not 8 July.
+    match_strategy: teams
+    select:
+      tv_is: ["TBC"]            # only fixtures still unresolved
+    writes: [TV]
+    channel_map:
+      "Channel one": vmone
+      "Channel two": vmtwo
+    # The guide lists terrestrial coverage only, so absence from it means the
+    # game is on LOITV instead. Applied on a clean no-match only -- never on an
+    # ambiguous match, a date mismatch, or a failed fetch.
+    default_tv: loitv
+    # Capped by what the source can actually see. The guide runs today + 6, so
+    # a fixture 7+ days out is missing because it is off the end of the
+    # schedule, not because it is off TV. Those stay TBC and get resolved by a
+    # later daily run as they come into range.
+    default_tv_max_days: 6
+
+  golf:
+    aliases: ["golf"]
+    source:
+      url: https://www.skysports.com/watch/golf-on-sky
+      max_chars: 40000
+      min_extractions: 1
+    match_strategy: event_round  # TeamA holds the event, TeamB the round
+    select: all                  # every Golf row in the window, regardless of TV/Time
+    writes: [TV, Time]
+    tie_break: earliest_time     # one event airing several times in a day
+    channel_map:
+      "Sky Sports Golf": skygolf
+      "Sky Sports Main Event": skymain
+      "Sky Sports Mix": skymix
+    default_tv: null
+    default_tv_max_days: null
