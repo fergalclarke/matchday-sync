@@ -84,17 +84,34 @@ Per-sport rules live in `enrichment.yaml`:
   `TV`/`Time`. Sky is authoritative, so it overwrites; writes are diff-checked so
   repeat runs are no-ops, and any overwrite of a non-`TBC` value is reported
   under its own heading.
+  `TV` is always `"Sky Sports"` — there is deliberately no drill-down to Sky
+  Sports Golf/Mix/+. That is a `channel_fallback` rather than a map of channel
+  names, so Sky adding a channel can't break a run. **`Time` is the field that
+  actually matters here**: the earliest start across every channel showing that
+  event that day (`tie_break: earliest_time`).
+  Note `TeamB` holds the *tour* ("PGA Tour"), not the round, so it isn't used
+  for matching — the date is what separates one round from the next. Golf also
+  sets `date_tolerance_days: 0`; see below.
 
-Three things are load-bearing and easy to break:
+Four things are load-bearing and easy to break:
 
 1. **The near-match pass in `enrich/match.py` must run before anything is
    declared absent.** A fixture whose TV pick moved dates fails the exact-date
    check; without the ±3-day pass it would fall through to "not in source" and be
-   silently stamped `loitv`.
-2. **A failed source must never reach the matcher.** Since absence means
+   silently stamped `loitv`. This is per-sport (`date_tolerance_days`): golf sets
+   it to **0**, because a tournament repeats one event name across four
+   consecutive days, so a non-zero window near-matches a sibling round and
+   reports a bogus date mismatch for any day the source hasn't published yet.
+2. **`similarity()` needs its token-containment branch.** Broadcasters pad event
+   names — Airtable holds `BMW Championship`, Sky lists `Fedex Playoffs BMW
+   Championship Day 1 PGA Tour Golf`. A plain `SequenceMatcher` ratio scores that
+   0.68, under the 0.82 threshold, so **every golf row silently failed to match**
+   until containment was added. Any change here wants the parametrised cases in
+   `tests/test_match.py` re-run.
+3. **A failed source must never reach the matcher.** Since absence means
    `loitv` for LoI, an empty listing set from a broken fetch would stamp every
    candidate. Guarded by fetch health checks and `min_extractions`.
-3. **`max_default_writes`** caps how many rows one run may default, mirroring
+4. **`max_default_writes`** caps how many rows one run may default, mirroring
    `MAX_AIRTABLE_DELETE` in the cleanup script. This is what catches a source
    redesign that still yields plausible listings matching nothing.
 

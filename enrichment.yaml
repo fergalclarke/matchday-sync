@@ -71,13 +71,34 @@ sports:
       url: https://www.skysports.com/watch/golf-on-sky
       max_chars: 40000
       min_extractions: 1
-    match_strategy: event_round  # TeamA holds the event, TeamB the round
+      hint: >-
+        Event titles carry series prefixes and round suffixes, e.g.
+        "Fedex Playoffs BMW Championship Day 1 PGA Tour Golf". Put the full
+        title in `event` and the round/day label in `round`.
+        One event can be shown on several channels at different times in the
+        same day ("..., Sky Sports Golf (16:00), Sky Sports Main Event
+        (20:30)"). Emit a SEPARATE listing for each channel-and-time pair, so
+        that the earliest start time is always visible.
+        Dates are day-and-month headings like "Thu 20th August"; resolve the
+        year against the reference date.
+    # TeamA holds the event. TeamB is the tour ("PGA Tour"), not the round, so
+    # it isn't used for matching -- the date is what separates one round from
+    # the next.
+    match_strategy: event_round
+    # No near-match pass. A tournament repeats the same event name on four
+    # consecutive days, so a +/-3 day window would near-match a sibling round
+    # and report a bogus "date mismatch" for any day the source hasn't listed
+    # yet. Only an exact date counts here. (LoI keeps the default of 3: a
+    # fixture appears once, so a date shift there is a genuine moved TV pick.)
+    date_tolerance_days: 0
     select: all                  # every Golf row in the window, regardless of TV/Time
     writes: [TV, Time]
-    tie_break: earliest_time     # one event airing several times in a day
-    channel_map:
-      "Sky Sports Golf": skygolf
-      "Sky Sports Main Event": skymain
-      "Sky Sports Mix": skymix
+    tie_break: earliest_time     # one event on several channels => earliest start
+    # Golf doesn't distinguish channels: whichever Sky channel carries it, the
+    # stored value is "Sky Sports". A fallback rather than a map of the four
+    # current channel names, so Sky adding a fifth can't break a run -- they
+    # already added "Sky Sports+", which the enumerated map missed.
+    channel_map: {}
+    channel_fallback: "Sky Sports"
     default_tv: null
     default_tv_max_days: null
