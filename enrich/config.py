@@ -32,6 +32,12 @@ class SportConfig:
     match_strategy: str
     writes: list[str]
     channel_map: dict[str, str]
+    # Used when a listing's channel is not in channel_map. Set it for sports
+    # where the specific channel doesn't matter (golf is always "Sky Sports",
+    # whichever Sky channel carries it), so a newly added channel can't break
+    # the run. Leave unset where the channel is meaningful -- LoI needs to
+    # tell vmone from vmtwo, so an unmapped channel there must be flagged.
+    channel_fallback: str | None
     select_all: bool
     select_tv_is: list[str]
     default_tv: str | None
@@ -150,6 +156,11 @@ def load_config(path: str | Path = "enrichment.yaml") -> Config:
                 match_strategy=strategy,
                 writes=[str(w) for w in writes],
                 channel_map={str(k): str(v) for k, v in channel_map.items()},
+                channel_fallback=(
+                    str(body["channel_fallback"])
+                    if body.get("channel_fallback") is not None
+                    else None
+                ),
                 select_all=select_all,
                 select_tv_is=select_tv_is,
                 default_tv=default_tv,

@@ -52,10 +52,32 @@ def normalise_name(value: str) -> str:
 
 
 def similarity(a: str, b: str) -> float:
+    """
+    How alike are two names, 0..1.
+
+    A plain character ratio is not enough on its own. Broadcasters pad event
+    names with series prefixes and round suffixes -- Airtable holds "BMW
+    Championship" while Sky lists "Fedex Playoffs BMW Championship Day 1 PGA
+    Tour Golf" -- and SequenceMatcher punishes that length gap hard enough
+    (0.68) to fall under the match threshold. So when every token of the
+    shorter name appears in the longer one, treat it as a strong match.
+
+    The two-token floor stops a single common word ("Rovers", "Championship")
+    from carrying a match on its own, and the score stays just under 1.0 so an
+    exact match still outranks a containment one.
+    """
     na, nb = normalise_name(a), normalise_name(b)
     if not na or not nb:
         return 0.0
-    return SequenceMatcher(None, na, nb).ratio()
+
+    ratio = SequenceMatcher(None, na, nb).ratio()
+
+    tokens_a, tokens_b = set(na.split()), set(nb.split())
+    shorter, longer = sorted((tokens_a, tokens_b), key=len)
+    if len(shorter) >= 2 and shorter <= longer:
+        return max(ratio, 0.95)
+
+    return ratio
 
 
 def is_empty(value) -> bool:
@@ -97,12 +119,17 @@ def _time_sort_key(listing):
 
 
 def _resolve_channel(sport: SportConfig, raw_channel: str) -> str | None:
-    """Channel name -> slug, tolerant of casing and whitespace. None if unmapped."""
+    """
+    Channel name -> the value to store, tolerant of casing and whitespace.
+
+    Returns None only when the channel is unmapped *and* the sport has no
+    fallback, which is the signal to flag rather than write.
+    """
     target = normalise_name(raw_channel)
     for name, slug in sport.channel_map.items():
         if normalise_name(name) == target:
             return slug
-    return None
+    return sport.channel_fallback
 
 
 def _build_decision(sport: SportConfig, record: dict, listing, confidence: float) -> Decision:
