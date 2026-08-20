@@ -65,6 +65,57 @@ sports:
     # later daily run as they come into range.
     default_tv_max_days: 6
 
+  epl:
+    aliases: ["epl", "premier league"]
+    source:
+      url: https://www.live-footballontv.com/live-premier-league-football-on-tv.html
+      max_chars: 60000          # page flattens to ~11k chars
+      min_extractions: 5
+      hint: >-
+        Listings sit under full date headings like "Saturday 22nd August 2026",
+        each line being a kick-off time, then "Home v Away", then the
+        competition, then one or more channel names run together with no
+        separator, e.g. "Sky Sports Main Event Sky Sports Premier League Sky
+        Sports Ultra HDR" or "TNT Sports 1 TNT Sports Ultimate HBO Max".
+        Split those into individual channels and emit a SEPARATE listing for
+        each channel a fixture is on, repeating the teams, date and time.
+        "Sky Sports TBC" is a real channel value, meaning Sky holds the rights
+        but has not confirmed which channel; report it as written.
+        Copy team names exactly as the page writes them.
+    match_strategy: teams
+    select:
+      tv_is: ["TBC"]
+    writes: [TV]
+    # "Any Sky Sports channel" and "any TNT channel" are families, not fixed
+    # lists: Main Event, Premier League, Ultra HDR, TBC, TNT Sports 1/2/
+    # Ultimate. Substring rules rather than an enumeration, so a channel added
+    # mid-season can't quietly stop matching.
+    channel_map: {}
+    channel_patterns:
+      - match: "sky sports"
+        value: "Sky Sports"
+      - match: "tnt"
+        value: "tnt"
+    # Everything else on this page (HBO Max, Amazon Prime, Premier Sports) is
+    # explicitly out of scope. Drop those listings rather than flagging them --
+    # they are noise, not something to review. The count still appears in the
+    # job summary so a broken pattern is visible.
+    ignore_unmatched_channels: true
+    # This source is not an allowlist of anything, so absence means only that
+    # the fixture isn't on a channel we track. Never default.
+    default_tv: null
+    default_tv_max_days: null
+    # The site abbreviates differently to API-Football, which is what populates
+    # these rows. Only the five that fuzzy matching cannot bridge on its own
+    # are listed; "Newcastle"/"Newcastle United", "Leeds"/"Leeds United" and
+    # "Bournemouth"/"AFC Bournemouth" already normalise to the same thing.
+    name_aliases:
+      "Manchester City": ["Man City"]
+      "Manchester United": ["Man Utd"]
+      "Tottenham": ["Tottenham Hotspur", "Spurs"]
+      "Coventry": ["Coventry City"]
+      "Ipswich": ["Ipswich Town"]
+
   golf:
     aliases: ["golf"]
     source:

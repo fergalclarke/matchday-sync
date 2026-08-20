@@ -38,6 +38,19 @@ class SportConfig:
     # the run. Leave unset where the channel is meaningful -- LoI needs to
     # tell vmone from vmtwo, so an unmapped channel there must be flagged.
     channel_fallback: str | None
+    # Substring rules tried after channel_map, in order. For sports where a
+    # whole family of channels collapses to one value: every "Sky Sports
+    # Something" is just "Sky Sports". Stored pre-normalised.
+    channel_patterns: list[tuple[str, str]]
+    # Drop listings whose channel matches nothing, instead of flagging them.
+    # EPL is carried by broadcasters we don't track (HBO Max, Amazon Prime);
+    # those listings are noise, not something a human needs to review.
+    ignore_unmatched_channels: bool
+    # Name equivalences, as normalised-variant -> normalised-canonical. Sources
+    # abbreviate inconsistently and fuzzy matching alone cannot close the gap:
+    # "Manchester United" vs "Man Utd" scores 0.46, "Tottenham" vs "Tottenham
+    # Hotspur" 0.69 -- both well under the threshold.
+    name_aliases: dict[str, str]
     select_all: bool
     select_tv_is: list[str]
     default_tv: str | None
@@ -86,6 +99,50 @@ def _parse_select(raw, where: str) -> tuple[bool, list[str]]:
             raise ConfigError(f"{where}: select.tv_is must be a non-empty list")
         return False, [str(v).strip().lower() for v in values]
     raise ConfigError(f"{where}: select must be 'all' or a mapping with 'tv_is'")
+
+
+def _parse_channel_patterns(raw, where: str) -> list[tuple[str, str]]:
+    """[{match: "sky sports", value: "Sky Sports"}, ...] -> ordered pairs."""
+    if not raw:
+        return []
+    if not isinstance(raw, list):
+        raise ConfigError(f"{where}: channel_patterns must be a list")
+
+    # Imported here to keep config free of a module-level dependency on match.
+    from .match import normalise_name
+
+    patterns = []
+    for entry in raw:
+        if not isinstance(entry, dict) or "match" not in entry or "value" not in entry:
+            raise ConfigError(
+                f"{where}: each channel_patterns entry needs 'match' and 'value'"
+            )
+        needle = normalise_name(entry["match"])
+        if not needle:
+            raise ConfigError(f"{where}: channel_patterns 'match' cannot be empty")
+        patterns.append((needle, str(entry["value"])))
+    return patterns
+
+
+def _parse_name_aliases(raw, where: str) -> dict[str, str]:
+    """{canonical: [variant, ...]} -> {normalised variant: normalised canonical}."""
+    if not raw:
+        return {}
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{where}: name_aliases must be a mapping")
+
+    from .match import normalise_name
+
+    index: dict[str, str] = {}
+    for canonical, variants in raw.items():
+        target = normalise_name(canonical)
+        if isinstance(variants, str):
+            variants = [variants]
+        if not isinstance(variants, list):
+            raise ConfigError(f"{where}: name_aliases['{canonical}'] must be a list")
+        for variant in variants:
+            index[normalise_name(variant)] = target
+    return index
 
 
 def load_config(path: str | Path = "enrichment.yaml") -> Config:
@@ -161,6 +218,9 @@ def load_config(path: str | Path = "enrichment.yaml") -> Config:
                     if body.get("channel_fallback") is not None
                     else None
                 ),
+                channel_patterns=_parse_channel_patterns(body.get("channel_patterns"), where),
+                ignore_unmatched_channels=bool(body.get("ignore_unmatched_channels", False)),
+                name_aliases=_parse_name_aliases(body.get("name_aliases"), where),
                 select_all=select_all,
                 select_tv_is=select_tv_is,
                 default_tv=default_tv,

@@ -80,6 +80,20 @@ Per-sport rules live in `enrichment.yaml`:
   10-day Airtable window — a fixture further out is missing because it is off
   the end of the schedule, not because it is off TV. **Never raise
   `default_tv_max_days` above the source's actual coverage.**
+- **EPL** — candidates are rows with `TV = "TBC"`. Source is
+  live-footballontv.com, which covers ~2.5 months, so no horizon cap is needed.
+  Any Sky Sports channel → `Sky Sports`; any TNT channel → `tnt`; every other
+  broadcaster (HBO Max, Amazon Prime, Premier Sports) is **ignored**, not
+  flagged. Absence never defaults — it only means no channel we track.
+  Two mechanisms exist for this sport specifically:
+  `channel_patterns` (substring rules, because "any Sky Sports channel" spans
+  Main Event / Premier League / Ultra HDR / TBC) and `name_aliases`, because
+  the site abbreviates differently to API-Football and fuzzy matching cannot
+  bridge it — `Manchester United` vs `Man Utd` scores 0.46, `Tottenham` vs
+  `Tottenham Hotspur` 0.69. Only the five teams that actually need it are
+  aliased. Note `normalise_name` already strips `FC`/`United`/`Utd` as noise,
+  so aliases are stored normalised and `Man Utd` → `Manchester United` is
+  really `man` → `manchester`.
 - **Golf** — candidates are *every* Golf row in the window, regardless of current
   `TV`/`Time`. Sky is authoritative, so it overwrites; writes are diff-checked so
   repeat runs are no-ops, and any overwrite of a non-`TBC` value is reported
