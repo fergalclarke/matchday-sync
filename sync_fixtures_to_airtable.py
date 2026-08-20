@@ -32,9 +32,9 @@ FOOTBALL_HEADERS = {
 # Leagues you want to fetch
 LEAGUES = [
     {"id": 357, "season": 2026, "sport": "LoI"},  # LOI
-    {"id": 39,  "season": 2025, "sport": "EPL"},  # Premier League
-    {"id": 2,   "season": 2025, "sport": "UCL"},  # UCL
-    {"id": 3,   "season": 2025, "sport": "EL"},  # Europa League
+    {"id": 39,  "season": 2026, "sport": "EPL"},  # Premier League
+    {"id": 2,   "season": 2026, "sport": "UCL"},  # UCL
+    {"id": 3,   "season": 2026, "sport": "EL"},  # Europa League
 ]
 
 # Time config
