@@ -170,7 +170,7 @@ def main(argv=None) -> int:
 
     try:
         airtable = AirtableClient(api_key, config.base_id, config.table)
-        records = airtable.list_fixtures(today.isoformat(), window_end.isoformat())
+        records = airtable.list_fixtures(today, window_end)
     except AirtableError as exc:
         print(f"[ERROR] {exc}")
         return 2

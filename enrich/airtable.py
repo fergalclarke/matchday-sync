@@ -1,6 +1,9 @@
+import datetime as dt
 import time
 
 import requests
+
+from .match import parse_date
 
 API_ROOT = "https://api.airtable.com/v0"
 
@@ -41,13 +44,24 @@ class AirtableClient:
         self.url = f"{API_ROOT}/{base_id}/{table}"
         self.headers = {"Authorization": f"Bearer {api_key}"}
 
-    def list_fixtures(self, date_from: str, date_to: str) -> list[dict]:
+    def list_fixtures(self, date_from: dt.date, date_to: dt.date) -> list[dict]:
         """
-        All fixtures in [date_from, date_to]. Filtering to 'needs work' happens
-        in Python -- Sport values are inconsistently cased and formula-side
-        string comparison on them is more trouble than it's worth.
+        All fixtures in [date_from, date_to], inclusive at both ends.
+
+        Airtable compares its date field against these strings after applying a
+        timezone offset, so a row dated exactly `date_to` lands just past
+        midnight UTC and falls outside a naive `{Date} <= date_to`. That
+        silently dropped the last day of the window on every run. Pad the
+        query by a day at each end and do the real bounds check in Python,
+        where the comparison is unambiguous.
+
+        Filtering to 'needs work' still happens in Python too -- Sport values
+        are inconsistently cased and formula-side string comparison on them is
+        more trouble than it's worth.
         """
-        formula = f"AND({{Date}} >= '{date_from}', {{Date}} <= '{date_to}')"
+        lower = (date_from - dt.timedelta(days=1)).isoformat()
+        upper = (date_to + dt.timedelta(days=1)).isoformat()
+        formula = f"AND({{Date}} >= '{lower}', {{Date}} <= '{upper}')"
         params = {"filterByFormula": formula, "pageSize": 100}
 
         records: list[dict] = []
@@ -64,8 +78,18 @@ class AirtableClient:
             if not offset:
                 break
 
-        print(f"[INFO] Airtable: {len(records)} fixtures in {date_from}..{date_to}")
-        return records
+        kept = []
+        for record in records:
+            row_date = parse_date(record.get("fields", {}).get("Date"))
+            if row_date is not None and date_from <= row_date <= date_to:
+                kept.append(record)
+
+        padding = len(records) - len(kept)
+        print(
+            f"[INFO] Airtable: {len(kept)} fixtures in {date_from}..{date_to} "
+            f"({padding} outside the window discarded)"
+        )
+        return kept
 
     def patch_records(self, updates: list[dict]) -> int:
         """updates: [{'id': recXXX, 'fields': {...}}, ...]"""

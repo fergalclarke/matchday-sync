@@ -84,13 +84,17 @@ def is_empty(value) -> bool:
     return str(value or "").strip().lower() in EMPTY_VALUES
 
 
-def _parse_date(value: str) -> dt.date | None:
+def parse_date(value: str) -> dt.date | None:
+    """ISO date or datetime string -> date. None when unparseable."""
     if not value:
         return None
     try:
         return dt.date.fromisoformat(str(value).split("T", 1)[0])
     except ValueError:
         return None
+
+
+_parse_date = parse_date
 
 
 def canonicalise(sport: SportConfig, value: str) -> str:
