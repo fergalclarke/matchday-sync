@@ -4,7 +4,9 @@ import pytest
 
 from enrich.config import SourceConfig, SportConfig
 from enrich.extract import EventListing, TeamListing
-from enrich.match import Outcome, decide, normalise_name, selectable, similarity
+from enrich.match import (
+    Outcome, decide, normalise_name, resolve_channel, selectable, similarity,
+)
 
 TODAY = dt.date(2026, 8, 7)
 
@@ -18,6 +20,9 @@ def make_sport(**overrides) -> SportConfig:
         writes=["TV"],
         channel_map={"Virgin Media Two": "vmtwo", "Virgin Media One": "vmone"},
         channel_fallback=None,
+        channel_patterns=[],
+        ignore_unmatched_channels=False,
+        name_aliases={},
         select_all=False,
         select_tv_is=["tbc"],
         default_tv="loitv",
@@ -352,3 +357,103 @@ def test_loi_keeps_the_moved_fixture_detection():
     d = decide(make_sport(), row(Date="2026-08-09"), [team_listing(date="2026-08-10")], TODAY)
     assert d.outcome is Outcome.FLAG
     assert "date mismatch" in d.reason
+
+
+# --- EPL: channel families, ignored broadcasters, team aliases --------------
+
+
+def epl_sport(**overrides) -> SportConfig:
+    return make_sport(
+        key="epl",
+        aliases=["epl", "premier league"],
+        channel_map={},
+        channel_patterns=[("sky sports", "Sky Sports"), ("tnt", "tnt")],
+        ignore_unmatched_channels=True,
+        default_tv=None,
+        default_tv_max_days=None,
+        # Built the way config.py builds it, so the test can't drift from
+        # production -- note normalise_name strips "Utd"/"United" as noise,
+        # so the real key here is "man" -> "manchester".
+        name_aliases={
+            normalise_name(variant): normalise_name(canonical)
+            for variant, canonical in {
+                "Man City": "Manchester City",
+                "Man Utd": "Manchester United",
+                "Tottenham Hotspur": "Tottenham",
+                "Coventry City": "Coventry",
+                "Ipswich Town": "Ipswich",
+            }.items()
+        },
+        **overrides,
+    )
+
+
+@pytest.mark.parametrize(
+    "channel, expected",
+    [
+        ("Sky Sports Main Event", "Sky Sports"),
+        ("Sky Sports Premier League", "Sky Sports"),
+        ("Sky Sports Ultra HDR", "Sky Sports"),
+        ("Sky Sports TBC", "Sky Sports"),      # rights held, channel unconfirmed
+        ("TNT Sports 1", "tnt"),
+        ("TNT Sports Ultimate", "tnt"),
+    ],
+)
+def test_epl_channel_families_collapse(channel, expected):
+    d = decide(epl_sport(), row(Sport="EPL"), [team_listing(channel=channel)], TODAY)
+    assert d.outcome is Outcome.WRITE
+    assert d.fields == {"TV": expected}
+
+
+@pytest.mark.parametrize("channel", ["HBO Max", "Amazon Prime", "Premier Sports 1"])
+def test_epl_untracked_channels_resolve_to_nothing(channel):
+    """These get dropped before matching; nothing is written and nothing flagged."""
+    assert resolve_channel(epl_sport(), channel) is None
+
+
+@pytest.mark.parametrize(
+    "airtable_name, source_name",
+    [
+        ("Manchester City", "Man City"),
+        ("Manchester United", "Man Utd"),
+        ("Tottenham", "Tottenham Hotspur"),
+        ("Coventry", "Coventry City"),
+        ("Ipswich", "Ipswich Town"),
+    ],
+)
+def test_epl_team_aliases_bridge_abbreviations(airtable_name, source_name):
+    """Fuzzy matching alone scores Manchester United vs Man Utd at 0.46."""
+    sport = epl_sport()
+    rec = {"id": "r1", "fields": {"FixtureID": "1", "Date": "2026-08-22",
+                                  "Sport": "EPL", "TeamA": airtable_name,
+                                  "TeamB": "Arsenal", "TV": "TBC"}}
+    listing = TeamListing(home=source_name, away="Arsenal", date="2026-08-22",
+                          time="15:00", channel="Sky Sports Main Event")
+    d = decide(sport, rec, [listing], TODAY)
+    assert d.outcome is Outcome.WRITE
+    assert d.fields == {"TV": "Sky Sports"}
+
+
+def test_epl_absent_fixture_is_left_alone():
+    """No default for EPL: absence just means no channel we track."""
+    other = team_listing(home="Chelsea", away="Fulham")
+    d = decide(epl_sport(), row(Sport="EPL"), [other], TODAY)
+    assert d.outcome is Outcome.NO_CHANGE
+    assert d.fields == {}
+
+
+def test_epl_sky_and_tnt_on_one_fixture_is_flagged():
+    """A genuine conflict still needs a human, not a coin toss."""
+    sky = team_listing(channel="Sky Sports Main Event")
+    tnt = team_listing(channel="TNT Sports 1")
+    d = decide(epl_sport(), row(Sport="EPL"), [sky, tnt], TODAY)
+    assert d.outcome is Outcome.FLAG
+
+
+def test_epl_repeated_sky_channels_are_not_a_conflict():
+    """One fixture on three Sky channels collapses to a single value."""
+    listings = [team_listing(channel=c) for c in
+                ["Sky Sports Main Event", "Sky Sports Premier League", "Sky Sports Ultra HDR"]]
+    d = decide(epl_sport(), row(Sport="EPL"), listings, TODAY)
+    assert d.outcome is Outcome.WRITE
+    assert d.fields == {"TV": "Sky Sports"}

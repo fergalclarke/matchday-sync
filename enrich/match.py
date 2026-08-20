@@ -93,18 +93,31 @@ def _parse_date(value: str) -> dt.date | None:
         return None
 
 
+def canonicalise(sport: SportConfig, value: str) -> str:
+    """
+    Fold a name onto its canonical form via the sport's alias map.
+
+    Fuzzy matching cannot bridge an abbreviation: "Manchester United" against
+    "Man Utd" scores 0.46. Aliases close that gap declaratively, in config.
+    """
+    normalised = normalise_name(value)
+    return sport.name_aliases.get(normalised, normalised)
+
+
 def _score(sport: SportConfig, fields: dict, listing) -> float:
-    team_a = fields.get("TeamA", "")
-    team_b = fields.get("TeamB", "")
+    team_a = canonicalise(sport, fields.get("TeamA", ""))
+    team_b = canonicalise(sport, fields.get("TeamB", ""))
 
     if sport.match_strategy == "teams":
+        home = canonicalise(sport, listing.home)
+        away = canonicalise(sport, listing.away)
         # Sources sometimes list the fixture the other way round, so try both.
-        direct = min(similarity(team_a, listing.home), similarity(team_b, listing.away))
-        swapped = min(similarity(team_a, listing.away), similarity(team_b, listing.home))
+        direct = min(similarity(team_a, home), similarity(team_b, away))
+        swapped = min(similarity(team_a, away), similarity(team_b, home))
         return max(direct, swapped)
 
     # event_round: the event name identifies it; the date separates the rounds.
-    return similarity(team_a, listing.event)
+    return similarity(team_a, canonicalise(sport, listing.event))
 
 
 def _listing_label(sport: SportConfig, listing) -> str:
@@ -118,18 +131,30 @@ def _time_sort_key(listing):
     return (listing.time is None, listing.time or "")
 
 
-def _resolve_channel(sport: SportConfig, raw_channel: str) -> str | None:
+def resolve_channel(sport: SportConfig, raw_channel: str) -> str | None:
     """
     Channel name -> the value to store, tolerant of casing and whitespace.
 
-    Returns None only when the channel is unmapped *and* the sport has no
-    fallback, which is the signal to flag rather than write.
+    Tried in order: exact channel_map, then channel_patterns (substring, for
+    families like "Sky Sports <anything>"), then channel_fallback. Returns None
+    when nothing matches, which is the signal to flag -- or, when the sport
+    sets ignore_unmatched_channels, to drop the listing.
     """
     target = normalise_name(raw_channel)
+
     for name, slug in sport.channel_map.items():
         if normalise_name(name) == target:
             return slug
+
+    for needle, value in sport.channel_patterns:
+        if needle in target:
+            return value
+
     return sport.channel_fallback
+
+
+# Kept as the internal name used elsewhere in this module.
+_resolve_channel = resolve_channel
 
 
 def _build_decision(sport: SportConfig, record: dict, listing, confidence: float) -> Decision:

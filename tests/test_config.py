@@ -31,7 +31,7 @@ def test_shipped_config_loads():
     config = load_config("enrichment.yaml")
     assert config.base_id == "appqvIWkUegyDEI9l"
     assert config.window_days == 10
-    assert {s.key for s in config.sports} == {"loi", "golf"}
+    assert {s.key for s in config.sports} == {"loi", "epl", "golf"}
 
 
 def test_shipped_config_golf_selects_everything():

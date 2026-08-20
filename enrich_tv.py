@@ -21,7 +21,7 @@ from enrich.airtable import AirtableClient, AirtableError
 from enrich.config import ConfigError, SportConfig, load_config
 from enrich.extract import ExtractionError, extract_listings
 from enrich.fetch import FetchError, fetch_text
-from enrich.match import Decision, Outcome, decide, selectable
+from enrich.match import Decision, Outcome, decide, resolve_channel, selectable
 from enrich.report import SportReport, build_summary, emit
 
 LOCAL_TZ = ZoneInfo("Europe/Dublin")
@@ -94,6 +94,17 @@ def run_sport(
         report.error = str(exc)
         print(f"[ERROR] {sport.key}: {exc}")
         return report
+
+    if sport.ignore_unmatched_channels:
+        # Drop listings on broadcasters this sport doesn't track (HBO Max,
+        # Amazon Prime) before matching, so a fixture carried only by one of
+        # them reads as "absent" rather than filling the review list. Counted
+        # so a pattern that stops matching shows up in the summary.
+        kept = [l for l in listings if resolve_channel(sport, l.channel) is not None]
+        report.ignored_channels = len(listings) - len(kept)
+        if report.ignored_channels:
+            print(f"[INFO] {sport.key}: ignored {report.ignored_channels} listings on untracked channels")
+        listings = kept
 
     if len(listings) < sport.source.min_extractions:
         report.source_ok = False
