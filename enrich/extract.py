@@ -3,7 +3,7 @@ import datetime as dt
 import anthropic
 from pydantic import BaseModel, Field
 
-from .config import SportConfig
+from .config import SourceConfig, SportConfig
 
 
 class ExtractionError(RuntimeError):
@@ -56,7 +56,7 @@ Rules:
 - If the page shows no listings at all, return an empty list."""
 
 
-def _user_prompt(sport: SportConfig, page_text: str, today: dt.date, window_end: dt.date) -> str:
+def _user_prompt(sport: SportConfig, source: SourceConfig, page_text: str, today: dt.date, window_end: dt.date) -> str:
     if sport.match_strategy == "teams":
         shape = "Each listing is a match between two teams."
     else:
@@ -70,8 +70,8 @@ def _user_prompt(sport: SportConfig, page_text: str, today: dt.date, window_end:
         f"Extract only listings dated {today.isoformat()} to {window_end.isoformat()} inclusive.",
         shape,
     ]
-    if sport.source.hint:
-        parts.append(f"\nAbout this page:\n{sport.source.hint}")
+    if source.hint:
+        parts.append(f"\nAbout this page:\n{source.hint}")
 
     return (
         "\n".join(parts)
@@ -82,6 +82,7 @@ def _user_prompt(sport: SportConfig, page_text: str, today: dt.date, window_end:
 def extract_listings(
     client: anthropic.Anthropic,
     sport: SportConfig,
+    source: SourceConfig,
     page_text: str,
     today: dt.date,
     window_end: dt.date,
@@ -97,16 +98,16 @@ def extract_listings(
             messages=[
                 {
                     "role": "user",
-                    "content": _user_prompt(sport, page_text, today, window_end),
+                    "content": _user_prompt(sport, source, page_text, today, window_end),
                 }
             ],
             output_format=schema,
         )
     except anthropic.APIError as exc:
-        raise ExtractionError(f"{sport.key}: Anthropic API call failed ({exc})") from exc
+        raise ExtractionError(f"{sport.key}/{source.name}: Anthropic API call failed ({exc})") from exc
 
     if response.stop_reason == "refusal":
-        raise ExtractionError(f"{sport.key}: model refused the request")
+        raise ExtractionError(f"{sport.key}/{source.name}: model refused the request")
 
     if response.stop_reason == "max_tokens":
         raise ExtractionError(
@@ -116,11 +117,11 @@ def extract_listings(
 
     parsed = response.parsed_output
     if parsed is None:
-        raise ExtractionError(f"{sport.key}: model returned no parseable output")
+        raise ExtractionError(f"{sport.key}/{source.name}: model returned no parseable output")
 
     listings = _drop_out_of_window(parsed.listings, today, window_end)
     print(
-        f"[INFO] {sport.key}: extracted {len(listings)} listings "
+        f"[INFO] {sport.key}/{source.name}: extracted {len(listings)} listings "
         f"({response.usage.input_tokens} in / {response.usage.output_tokens} out)"
     )
     return listings

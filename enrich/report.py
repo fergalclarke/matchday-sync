@@ -13,6 +13,7 @@ class SportReport:
     error: str = ""
     aborted: str = ""
     ignored_channels: int = 0
+    per_source: list = field(default_factory=list)
     decisions: list[Decision] = field(default_factory=list)
 
     @property
@@ -60,9 +61,10 @@ def build_summary(
             status = f"❌ failed — {r.error}"
         else:
             status = "✅ ok"
+        detail = " + ".join(f"{n}:{c}" for n, c in r.per_source) or r.listings
         health_rows.append(
             [
-                r.key, status, r.listings, r.candidates,
+                r.key, status, detail, r.candidates,
                 r.matched, r.defaulted, len(r.flagged),
                 r.ignored_channels or "—",
             ]

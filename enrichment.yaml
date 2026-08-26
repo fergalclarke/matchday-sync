@@ -3,6 +3,11 @@
 # Adding a sport = adding a block under `sports`, as long as its matching fits
 # one of the existing strategies (`teams` or `event_round`). A genuinely new
 # match shape needs a new strategy function in enrich/match.py.
+#
+# `sources` is a list, tried in listed order. The first source that confidently
+# matches a fixture wins, so put the preferred broadcaster first. Channel rules
+# live on the source, not the sport, because each page names channels its own
+# way ("Channel two" vs "TNT Sports 2").
 
 airtable:
   # Base IDs are identifiers, not credentials. AIRTABLE_BASE_ID overrides this
@@ -20,6 +25,20 @@ defaults:
   max_default_writes: 12        # safety rail, mirrors MAX_AIRTABLE_DELETE
   request_timeout: 30
 
+# Reused below by every sport that reads the Virgin Media guide. The *accessible*
+# guide, not /tv-guide: the main guide renders one day only, keeps the channel in
+# an HTML attribute, and pages between days with JS (no href, no date param).
+# This one is plain server-rendered HTML with 7 days, explicit dates and times,
+# and channels as section headings -- all of which survive a text reduction.
+x-virginmedia: &virginmedia
+  name: virginmedia
+  url: https://www.virginmediatelevision.ie/access-services-tv-guide
+  max_chars: 150000             # page flattens to ~87k chars
+  min_extractions: 0            # a quiet week legitimately lists nothing
+  channel_map:
+    "Channel one": vmone
+    "Channel two": vmtwo
+
 sports:
   loi:
     aliases: ["loi", "league of ireland"]
@@ -30,31 +49,22 @@ sports:
     # which then drops it out of the candidate set permanently. Recall matters
     # more than the few euro a month. Drop to claude-haiku-4-5 to economise.
     model: claude-sonnet-5
-    source:
-      # The *accessible* guide, not /tv-guide. The main guide renders one day
-      # only, keeps the channel in an HTML attribute, and pages between days
-      # with JS (no href, no date param). This one is plain server-rendered
-      # HTML with 7 days, explicit dates/times, and channels as section
-      # headings -- everything survives a generic text reduction.
-      url: https://www.virginmediatelevision.ie/access-services-tv-guide
-      max_chars: 150000         # page flattens to ~87k chars
-      min_extractions: 1        # a quiet week may legitimately have one match
-      hint: >-
-        This is a general TV schedule for four channels, covering seven days.
-        Extract ONLY association football matches between two named teams
-        (titles look like "SSE Airtricity Men's Premier Division: Team A v
-        Team B"). Ignore every other programme.
-        Channel is a section heading, "TV Shows - Channel one" through
-        "Channel four"; each programme belongs to the most recent heading
-        above it. Report the channel as that heading's name, e.g. "Channel two".
-        Dates are day/month/year, so 7/8/26 is 7 August 2026, not 8 July.
+    sources:
+      - <<: *virginmedia
+        min_extractions: 1      # LoI plays weekly; zero listings is suspicious
+        hint: >-
+          This is a general TV schedule for four channels, covering seven days.
+          Extract ONLY League of Ireland football matches between two named
+          teams (titles look like "SSE Airtricity Men's Premier Division:
+          Team A v Team B"). Ignore every other programme.
+          Channel is a section heading, "TV Shows - Channel one" through
+          "Channel four"; each programme belongs to the most recent heading
+          above it. Report the channel as that heading's name, e.g. "Channel two".
+          Dates are day/month/year, so 7/8/26 is 7 August 2026, not 8 July.
     match_strategy: teams
     select:
       tv_is: ["TBC"]            # only fixtures still unresolved
     writes: [TV]
-    channel_map:
-      "Channel one": vmone
-      "Channel two": vmtwo
     # The guide lists terrestrial coverage only, so absence from it means the
     # game is on LOITV instead. Applied on a clean no-match only -- never on an
     # ambiguous match, a date mismatch, or a failed fetch.
@@ -67,42 +77,39 @@ sports:
 
   epl:
     aliases: ["epl", "premier league"]
-    source:
-      url: https://www.live-footballontv.com/live-premier-league-football-on-tv.html
-      max_chars: 60000          # page flattens to ~11k chars
-      min_extractions: 5
-      hint: >-
-        Listings sit under full date headings like "Saturday 22nd August 2026",
-        each line being a kick-off time, then "Home v Away", then the
-        competition, then one or more channel names run together with no
-        separator, e.g. "Sky Sports Main Event Sky Sports Premier League Sky
-        Sports Ultra HDR" or "TNT Sports 1 TNT Sports Ultimate HBO Max".
-        Split those into individual channels and emit a SEPARATE listing for
-        each channel a fixture is on, repeating the teams, date and time.
-        "Sky Sports TBC" is a real channel value, meaning Sky holds the rights
-        but has not confirmed which channel; report it as written.
-        Copy team names exactly as the page writes them.
+    sources:
+      - name: footballontv
+        url: https://www.live-footballontv.com/live-premier-league-football-on-tv.html
+        max_chars: 60000        # page flattens to ~11k chars
+        min_extractions: 5
+        # "Any Sky Sports channel" and "any TNT channel" are families, not fixed
+        # lists: Main Event, Premier League, Ultra HDR, the literal "Sky Sports
+        # TBC", TNT Sports 1/2/Ultimate. Substring rules rather than an
+        # enumeration, so a channel added mid-season can't quietly stop matching.
+        channel_patterns:
+          - {match: "sky sports", value: "Sky Sports"}
+          - {match: "tnt", value: "tnt"}
+        # Everything else on this page (HBO Max, Amazon Prime, Premier Sports)
+        # is out of scope. Drop those listings rather than flagging them; the
+        # count still appears in the job summary so a broken pattern is visible.
+        ignore_unmatched_channels: true
+        hint: >-
+          Listings sit under full date headings like "Saturday 22nd August 2026",
+          each line being a kick-off time, then "Home v Away", then the
+          competition, then one or more channel names run together with no
+          separator, e.g. "Sky Sports Main Event Sky Sports Premier League Sky
+          Sports Ultra HDR" or "TNT Sports 1 TNT Sports Ultimate HBO Max".
+          Split those into individual channels and emit a SEPARATE listing for
+          each channel a fixture is on, repeating the teams, date and time.
+          "Sky Sports TBC" is a real channel value, meaning Sky holds the rights
+          but has not confirmed which channel; report it as written.
+          Copy team names exactly as the page writes them.
     match_strategy: teams
     select:
       tv_is: ["TBC"]
     writes: [TV]
-    # "Any Sky Sports channel" and "any TNT channel" are families, not fixed
-    # lists: Main Event, Premier League, Ultra HDR, TBC, TNT Sports 1/2/
-    # Ultimate. Substring rules rather than an enumeration, so a channel added
-    # mid-season can't quietly stop matching.
-    channel_map: {}
-    channel_patterns:
-      - match: "sky sports"
-        value: "Sky Sports"
-      - match: "tnt"
-        value: "tnt"
-    # Everything else on this page (HBO Max, Amazon Prime, Premier Sports) is
-    # explicitly out of scope. Drop those listings rather than flagging them --
-    # they are noise, not something to review. The count still appears in the
-    # job summary so a broken pattern is visible.
-    ignore_unmatched_channels: true
-    # This source is not an allowlist of anything, so absence means only that
-    # the fixture isn't on a channel we track. Never default.
+    # Not an allowlist of anything, so absence means only that the fixture
+    # isn't on a channel we track. Never default.
     default_tv: null
     default_tv_max_days: null
     # The site abbreviates differently to API-Football, which is what populates
@@ -116,22 +123,115 @@ sports:
       "Coventry": ["Coventry City"]
       "Ipswich": ["Ipswich Town"]
 
+  # NOTE: sync_fixtures_to_airtable.py labels league 2 as "UCL", not "CL", so
+  # both are aliased -- configuring only "cl" would match nothing.
+  ucl:
+    aliases: ["ucl", "cl", "champions league"]
+    # Same needle-in-haystack argument as LoI: a missed Virgin Media listing
+    # falls through to the TNT source and writes `tnt` over a free-to-air game,
+    # which then leaves the candidate set for good.
+    model: claude-sonnet-5
+    sources:
+      # Virgin Media first: these are free-to-air here, so they win over TNT.
+      - <<: *virginmedia
+        hint: >-
+          This is a general TV schedule for four channels, covering seven days.
+          Extract ONLY UEFA Champions League football matches between two named
+          teams (titles look like "UEFA Champions League LIVE: Team A v Team B").
+          Ignore every other programme, including other competitions.
+          Channel is a section heading, "TV Shows - Channel one" through
+          "Channel four"; each programme belongs to the most recent heading
+          above it. Report the channel as that heading's name, e.g. "Channel two".
+          Dates are day/month/year, so 26/8/26 is 26 August 2026.
+      - name: footballontv
+        url: https://www.live-footballontv.com/live-champions-league-football-on-tv.html
+        max_chars: 60000
+        min_extractions: 0      # a week with no televised tie is normal
+        channel_patterns:
+          - {match: "tnt", value: "tnt"}
+          - {match: "sky sports", value: "Sky Sports"}
+          - {match: "amazon", value: "amazon"}
+        ignore_unmatched_channels: true
+        hint: >-
+          Listings sit under full date headings like "Wednesday 26th August
+          2026", each line being a kick-off time, then "Home v Away", then the
+          competition and round, then one or more channel names run together
+          with no separator, e.g. "TNT Sports 2 HBO Max".
+          Split those into individual channels and emit a SEPARATE listing for
+          each channel a fixture is on, repeating the teams, date and time.
+          Copy team names exactly as the page writes them.
+    match_strategy: teams
+    select:
+      tv_is: ["TBC"]
+    writes: [TV]
+    default_tv: null
+    default_tv_max_days: null
+
+  el:
+    aliases: ["el", "europa league"]
+    model: claude-sonnet-5
+    sources:
+      - <<: *virginmedia
+        hint: >-
+          This is a general TV schedule for four channels, covering seven days.
+          Extract ONLY UEFA Europa League football matches between two named
+          teams (titles look like "UEFA Europa League LIVE: Team A v Team B").
+          Ignore every other programme, including other competitions.
+          Channel is a section heading, "TV Shows - Channel one" through
+          "Channel four"; each programme belongs to the most recent heading
+          above it. Report the channel as that heading's name, e.g. "Channel two".
+          Dates are day/month/year, so 26/8/26 is 26 August 2026.
+      - name: footballontv
+        url: https://www.live-footballontv.com/live-uefa-europa-league-football-on-tv.html
+        max_chars: 60000
+        # This page frequently reads "No Upcoming TV Fixtures" -- it is not
+        # broken, the site just hasn't published the round yet. Zero is a
+        # legitimate result, and safe here only because there is no default_tv
+        # to mass-apply.
+        min_extractions: 0
+        channel_patterns:
+          - {match: "tnt", value: "tnt"}
+          - {match: "sky sports", value: "Sky Sports"}
+          - {match: "amazon", value: "amazon"}
+        ignore_unmatched_channels: true
+        hint: >-
+          Listings sit under full date headings like "Thursday 27th August
+          2026", each line being a kick-off time, then "Home v Away", then the
+          competition and round, then one or more channel names run together
+          with no separator, e.g. "TNT Sports 1 HBO Max".
+          Split those into individual channels and emit a SEPARATE listing for
+          each channel a fixture is on, repeating the teams, date and time.
+          If the page says there are no upcoming fixtures, return an empty list.
+          Copy team names exactly as the page writes them.
+    match_strategy: teams
+    select:
+      tv_is: ["TBC"]
+    writes: [TV]
+    default_tv: null
+    default_tv_max_days: null
+
   golf:
     aliases: ["golf"]
-    source:
-      url: https://www.skysports.com/watch/golf-on-sky
-      max_chars: 40000
-      min_extractions: 1
-      hint: >-
-        Event titles carry series prefixes and round suffixes, e.g.
-        "Fedex Playoffs BMW Championship Day 1 PGA Tour Golf". Put the full
-        title in `event` and the round/day label in `round`.
-        One event can be shown on several channels at different times in the
-        same day ("..., Sky Sports Golf (16:00), Sky Sports Main Event
-        (20:30)"). Emit a SEPARATE listing for each channel-and-time pair, so
-        that the earliest start time is always visible.
-        Dates are day-and-month headings like "Thu 20th August"; resolve the
-        year against the reference date.
+    sources:
+      - name: skysports
+        url: https://www.skysports.com/watch/golf-on-sky
+        max_chars: 40000
+        min_extractions: 1
+        # Golf doesn't distinguish channels: whichever Sky channel carries it,
+        # the stored value is "Sky Sports". A fallback rather than a map of the
+        # four current channel names, so Sky adding a fifth can't break a run --
+        # they already added "Sky Sports+", which an enumerated map missed.
+        channel_fallback: "Sky Sports"
+        hint: >-
+          Event titles carry series prefixes and round suffixes, e.g.
+          "Fedex Playoffs BMW Championship Day 1 PGA Tour Golf". Put the full
+          title in `event` and the round/day label in `round`.
+          One event can be shown on several channels at different times in the
+          same day ("..., Sky Sports Golf (16:00), Sky Sports Main Event
+          (20:30)"). Emit a SEPARATE listing for each channel-and-time pair, so
+          that the earliest start time is always visible.
+          Dates are day-and-month headings like "Thu 20th August"; resolve the
+          year against the reference date.
     # TeamA holds the event. TeamB is the tour ("PGA Tour"), not the round, so
     # it isn't used for matching -- the date is what separates one round from
     # the next.
@@ -142,14 +242,8 @@ sports:
     # yet. Only an exact date counts here. (LoI keeps the default of 3: a
     # fixture appears once, so a date shift there is a genuine moved TV pick.)
     date_tolerance_days: 0
-    select: all                  # every Golf row in the window, regardless of TV/Time
+    select: all                 # every Golf row in the window, regardless of TV/Time
     writes: [TV, Time]
-    tie_break: earliest_time     # one event on several channels => earliest start
-    # Golf doesn't distinguish channels: whichever Sky channel carries it, the
-    # stored value is "Sky Sports". A fallback rather than a map of the four
-    # current channel names, so Sky adding a fifth can't break a run -- they
-    # already added "Sky Sports+", which the enumerated map missed.
-    channel_map: {}
-    channel_fallback: "Sky Sports"
+    tie_break: earliest_time    # one event on several channels => earliest start
     default_tv: null
     default_tv_max_days: null

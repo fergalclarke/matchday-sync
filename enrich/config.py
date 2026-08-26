@@ -14,9 +14,24 @@ class ConfigError(ValueError):
 
 @dataclass
 class SourceConfig:
+    """
+    One page a sport is looked up in.
+
+    A sport can have several, tried in listed order: UCL checks the Virgin
+    Media guide first (free-to-air here, so it wins) and only falls back to
+    live-footballontv for fixtures Virgin Media isn't showing. Channel rules
+    live here rather than on the sport because each page names channels its
+    own way -- "Channel two" on one, "TNT Sports 2" on the other.
+    """
+
+    name: str
     url: str
     max_chars: int
     min_extractions: int
+    channel_map: dict[str, str]
+    channel_patterns: list[tuple[str, str]]
+    channel_fallback: str | None
+    ignore_unmatched_channels: bool
     # Free-text guidance appended to the extraction prompt, for pages whose
     # layout needs explaining (where the channel lives, which listings to
     # ignore, how dates are formatted). Keeping this in config is what lets a
@@ -28,28 +43,9 @@ class SourceConfig:
 class SportConfig:
     key: str
     aliases: list[str]
-    source: SourceConfig
+    sources: list[SourceConfig]
     match_strategy: str
     writes: list[str]
-    channel_map: dict[str, str]
-    # Used when a listing's channel is not in channel_map. Set it for sports
-    # where the specific channel doesn't matter (golf is always "Sky Sports",
-    # whichever Sky channel carries it), so a newly added channel can't break
-    # the run. Leave unset where the channel is meaningful -- LoI needs to
-    # tell vmone from vmtwo, so an unmapped channel there must be flagged.
-    channel_fallback: str | None
-    # Substring rules tried after channel_map, in order. For sports where a
-    # whole family of channels collapses to one value: every "Sky Sports
-    # Something" is just "Sky Sports". Stored pre-normalised.
-    channel_patterns: list[tuple[str, str]]
-    # Drop listings whose channel matches nothing, instead of flagging them.
-    # EPL is carried by broadcasters we don't track (HBO Max, Amazon Prime);
-    # those listings are noise, not something a human needs to review.
-    ignore_unmatched_channels: bool
-    # Name equivalences, as normalised-variant -> normalised-canonical. Sources
-    # abbreviate inconsistently and fuzzy matching alone cannot close the gap:
-    # "Manchester United" vs "Man Utd" scores 0.46, "Tottenham" vs "Tottenham
-    # Hotspur" 0.69 -- both well under the threshold.
     name_aliases: dict[str, str]
     select_all: bool
     select_tv_is: list[str]
@@ -145,6 +141,54 @@ def _parse_name_aliases(raw, where: str) -> dict[str, str]:
     return index
 
 
+def _parse_sources(body: dict, where: str) -> list[SourceConfig]:
+    """
+    `sources:` is a list, tried in listed order. A single-source sport still
+    writes it as a one-entry list, so there is only one shape to reason about.
+    """
+    raw = _require(body, "sources", where)
+    if not isinstance(raw, list) or not raw:
+        raise ConfigError(f"{where}: sources must be a non-empty list")
+
+    sources = []
+    for index, entry in enumerate(raw):
+        spot = f"{where}.sources[{index}]"
+        if not isinstance(entry, dict):
+            raise ConfigError(f"{spot}: must be a mapping")
+
+        channel_map = entry.get("channel_map") or {}
+        if not isinstance(channel_map, dict):
+            raise ConfigError(f"{spot}: channel_map must be a mapping")
+
+        sources.append(
+            SourceConfig(
+                name=str(entry.get("name") or f"source{index + 1}"),
+                url=_require(entry, "url", spot),
+                max_chars=int(entry.get("max_chars", 40000)),
+                # Default 1, but a fallback source legitimately lists nothing
+                # some weeks -- the Europa League page currently says "No
+                # Upcoming TV Fixtures". Set 0 there so an empty result reads
+                # as "nothing to match" rather than a broken scrape. Only safe
+                # because those sports have no default_tv to mass-apply.
+                min_extractions=int(entry.get("min_extractions", 1)),
+                channel_map={str(k): str(v) for k, v in channel_map.items()},
+                channel_patterns=_parse_channel_patterns(
+                    entry.get("channel_patterns"), spot
+                ),
+                channel_fallback=(
+                    str(entry["channel_fallback"])
+                    if entry.get("channel_fallback") is not None
+                    else None
+                ),
+                ignore_unmatched_channels=bool(
+                    entry.get("ignore_unmatched_channels", False)
+                ),
+                hint=str(entry.get("hint", "") or "").strip(),
+            )
+        )
+    return sources
+
+
 def load_config(path: str | Path = "enrichment.yaml") -> Config:
     path = Path(path)
     if not path.exists():
@@ -168,13 +212,7 @@ def load_config(path: str | Path = "enrichment.yaml") -> Config:
         if not isinstance(body, dict):
             raise ConfigError(f"{where}: must be a mapping")
 
-        source_raw = _require(body, "source", where)
-        source = SourceConfig(
-            url=_require(source_raw, "url", f"{where}.source"),
-            max_chars=int(source_raw.get("max_chars", 40000)),
-            min_extractions=int(source_raw.get("min_extractions", 1)),
-            hint=str(source_raw.get("hint", "") or "").strip(),
-        )
+        sources = _parse_sources(body, where)
 
         strategy = _require(body, "match_strategy", where)
         if strategy not in VALID_STRATEGIES:
@@ -201,25 +239,14 @@ def load_config(path: str | Path = "enrichment.yaml") -> Config:
             )
 
         aliases = body.get("aliases") or [key]
-        channel_map = body.get("channel_map") or {}
-        if not isinstance(channel_map, dict):
-            raise ConfigError(f"{where}: channel_map must be a mapping")
 
         sports.append(
             SportConfig(
                 key=key,
                 aliases=[str(a).strip().lower() for a in aliases],
-                source=source,
+                sources=sources,
                 match_strategy=strategy,
                 writes=[str(w) for w in writes],
-                channel_map={str(k): str(v) for k, v in channel_map.items()},
-                channel_fallback=(
-                    str(body["channel_fallback"])
-                    if body.get("channel_fallback") is not None
-                    else None
-                ),
-                channel_patterns=_parse_channel_patterns(body.get("channel_patterns"), where),
-                ignore_unmatched_channels=bool(body.get("ignore_unmatched_channels", False)),
                 name_aliases=_parse_name_aliases(body.get("name_aliases"), where),
                 select_all=select_all,
                 select_tv_is=select_tv_is,

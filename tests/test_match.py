@@ -11,17 +11,29 @@ from enrich.match import (
 TODAY = dt.date(2026, 8, 7)
 
 
+def make_source(**overrides) -> SourceConfig:
+    base = dict(
+        name="testsource",
+        url="https://example.test",
+        max_chars=1000,
+        min_extractions=1,
+        channel_map={"Virgin Media Two": "vmtwo", "Virgin Media One": "vmone"},
+        channel_patterns=[],
+        channel_fallback=None,
+        ignore_unmatched_channels=False,
+    )
+    base.update(overrides)
+    return SourceConfig(**base)
+
+
 def make_sport(**overrides) -> SportConfig:
+    sources = overrides.pop("sources", None) or [make_source()]
     base = dict(
         key="loi",
         aliases=["loi", "league of ireland"],
-        source=SourceConfig(url="https://example.test", max_chars=1000, min_extractions=3),
+        sources=sources,
         match_strategy="teams",
         writes=["TV"],
-        channel_map={"Virgin Media Two": "vmtwo", "Virgin Media One": "vmone"},
-        channel_fallback=None,
-        channel_patterns=[],
-        ignore_unmatched_channels=False,
         name_aliases={},
         select_all=False,
         select_tv_is=["tbc"],
@@ -44,10 +56,9 @@ def golf_sport(**overrides) -> SportConfig:
     return make_sport(
         key="golf",
         aliases=["golf"],
+        sources=[make_source(name="skysports", channel_map={}, channel_fallback="Sky Sports")],
         match_strategy="event_round",
         writes=["TV", "Time"],
-        channel_map={},
-        channel_fallback="Sky Sports",
         select_all=True,
         select_tv_is=[],
         default_tv=None,
@@ -86,21 +97,21 @@ def team_listing(**overrides) -> TeamListing:
 
 
 def test_exact_match_writes_mapped_slug():
-    d = decide(make_sport(), row(), [team_listing()], TODAY)
+    d = decide(make_sport(), [(make_sport().sources[0], [team_listing()])], row(), TODAY)
     assert d.outcome is Outcome.WRITE
     assert d.fields == {"TV": "vmtwo"}
     assert d.overwrites == []
 
 
 def test_already_correct_is_a_no_op():
-    d = decide(make_sport(), row(TV="vmtwo"), [team_listing()], TODAY)
+    d = decide(make_sport(), [(make_sport().sources[0], [team_listing()])], row(TV="vmtwo"), TODAY)
     assert d.outcome is Outcome.NO_CHANGE
     assert d.fields == {}
 
 
 def test_absent_from_source_gets_the_default():
     other = team_listing(home="Derry City", away="Sligo Rovers")
-    d = decide(make_sport(), row(), [other], TODAY)
+    d = decide(make_sport(), [(make_sport().sources[0], [other])], row(), TODAY)
     assert d.outcome is Outcome.DEFAULT
     assert d.fields == {"TV": "loitv"}
 
@@ -108,7 +119,7 @@ def test_absent_from_source_gets_the_default():
 def test_moved_fixture_is_flagged_not_defaulted():
     """The regression that matters: a date shift must not read as 'not on TV'."""
     moved = team_listing(date="2026-08-10")
-    d = decide(make_sport(), row(Date="2026-08-09"), [moved], TODAY)
+    d = decide(make_sport(), [(make_sport().sources[0], [moved])], row(Date="2026-08-09"), TODAY)
     assert d.outcome is Outcome.FLAG
     assert "date mismatch" in d.reason
     assert d.fields == {}
@@ -116,13 +127,13 @@ def test_moved_fixture_is_flagged_not_defaulted():
 
 def test_date_shift_beyond_tolerance_falls_through_to_default():
     far = team_listing(date="2026-08-16")
-    d = decide(make_sport(), row(Date="2026-08-09"), [far], TODAY)
+    d = decide(make_sport(), [(make_sport().sources[0], [far])], row(Date="2026-08-09"), TODAY)
     assert d.outcome is Outcome.DEFAULT
 
 
 def test_unmapped_channel_is_flagged_not_defaulted():
     rte = team_listing(channel="RTÉ2")
-    d = decide(make_sport(), row(), [rte], TODAY)
+    d = decide(make_sport(), [(make_sport().sources[0], [rte])], row(), TODAY)
     assert d.outcome is Outcome.FLAG
     assert "channel_map" in d.reason
     assert d.fields == {}
@@ -131,32 +142,32 @@ def test_unmapped_channel_is_flagged_not_defaulted():
 def test_default_not_applied_beyond_horizon():
     sport = make_sport(default_tv_max_days=5)
     far_out = row(Date=(TODAY + dt.timedelta(days=8)).isoformat())
-    d = decide(sport, far_out, [team_listing(home="Derry City", away="Sligo Rovers")], TODAY)
+    d = decide(sport, [(sport.sources[0], [team_listing(home="Derry City", away="Sligo Rovers")])], far_out, TODAY)
     assert d.outcome is Outcome.NO_CHANGE
 
 
 def test_default_applies_on_the_horizon_boundary():
     boundary = row(Date=(TODAY + dt.timedelta(days=10)).isoformat())
-    d = decide(make_sport(), boundary, [team_listing(home="Derry", away="Sligo")], TODAY)
+    d = decide(make_sport(), [(make_sport().sources[0], [team_listing(home="Derry", away="Sligo")])], boundary, TODAY)
     assert d.outcome is Outcome.DEFAULT
 
 
 def test_home_away_swap_still_matches():
     swapped = team_listing(home="Shamrock Rovers", away="Bohemians")
-    d = decide(make_sport(), row(), [swapped], TODAY)
+    d = decide(make_sport(), [(make_sport().sources[0], [swapped])], row(), TODAY)
     assert d.outcome is Outcome.WRITE
 
 
 def test_ambiguous_conflicting_listings_are_flagged():
     a = team_listing(channel="Virgin Media Two")
     b = team_listing(channel="Virgin Media One")
-    d = decide(make_sport(), row(), [a, b], TODAY)
+    d = decide(make_sport(), [(make_sport().sources[0], [a, b])], row(), TODAY)
     assert d.outcome is Outcome.FLAG
     assert "disagree" in d.reason
 
 
 def test_duplicate_listings_that_agree_are_not_ambiguous():
-    d = decide(make_sport(), row(), [team_listing(), team_listing()], TODAY)
+    d = decide(make_sport(), [(make_sport().sources[0], [team_listing(), team_listing()])], row(), TODAY)
     assert d.outcome is Outcome.WRITE
 
 
@@ -190,7 +201,7 @@ def golf_row(**fields) -> dict:
 
 
 def test_golf_writes_tv_and_time():
-    d = decide(golf_sport(), golf_row(), [event_listing()], TODAY)
+    d = decide(golf_sport(), [(golf_sport().sources[0], [event_listing()])], golf_row(), TODAY)
     assert d.outcome is Outcome.WRITE
     assert d.fields == {"TV": "Sky Sports", "Time": "14:00"}
 
@@ -198,14 +209,14 @@ def test_golf_writes_tv_and_time():
 def test_golf_takes_the_earliest_of_several_airings():
     early = event_listing(time="09:00", channel="Sky Sports Mix")
     late = event_listing(time="14:00", channel="Sky Sports Golf")
-    d = decide(golf_sport(), golf_row(), [late, early], TODAY)
+    d = decide(golf_sport(), [(golf_sport().sources[0], [late, early])], golf_row(), TODAY)
     assert d.fields["Time"] == "09:00"      # earliest across all channels
     assert d.fields["TV"] == "Sky Sports"
 
 
 def test_golf_overwriting_a_real_time_is_recorded():
     existing = golf_row(Time="13:30", TV="Sky Sports")
-    d = decide(golf_sport(), existing, [event_listing()], TODAY)
+    d = decide(golf_sport(), [(golf_sport().sources[0], [event_listing()])], existing, TODAY)
     assert d.outcome is Outcome.WRITE
     assert d.fields == {"Time": "14:00"}
     assert d.overwrites == ["Time"]
@@ -213,13 +224,13 @@ def test_golf_overwriting_a_real_time_is_recorded():
 
 def test_golf_absent_from_source_changes_nothing():
     """No default_tv for golf, so absence must not clear or invent a value."""
-    d = decide(golf_sport(), golf_row(), [event_listing(event="US PGA")], TODAY)
+    d = decide(golf_sport(), [(golf_sport().sources[0], [event_listing(event="US PGA")])], golf_row(), TODAY)
     assert d.outcome is Outcome.NO_CHANGE
 
 
 def test_golf_idempotent_on_repeat_runs():
     settled = golf_row(TV="Sky Sports", Time="14:00")
-    d = decide(golf_sport(), settled, [event_listing()], TODAY)
+    d = decide(golf_sport(), [(golf_sport().sources[0], [event_listing()])], settled, TODAY)
     assert d.outcome is Outcome.NO_CHANGE
     assert d.fields == {}
 
@@ -312,7 +323,7 @@ def test_bmw_championship_row_now_resolves():
         time="15:15",
         channel="Sky Sports Golf",
     )
-    d = decide(sport, record, [listing], dt.date(2026, 8, 20))
+    d = decide(sport, [(sport.sources[0], [listing])], record, dt.date(2026, 8, 20))
     assert d.outcome is Outcome.WRITE
     # TV already reads "Sky Sports", so only the placeholder Time changes.
     assert d.fields == {"Time": "15:15"}
@@ -327,14 +338,14 @@ def test_golf_accepts_any_sky_channel_including_new_ones():
     """
     sport = golf_sport()
     for channel in ["Sky Sports+", "Sky Sports Golf", "Sky Sports Something New"]:
-        d = decide(sport, golf_row(TV="TBC"), [event_listing(channel=channel)], TODAY)
+        d = decide(sport, [(sport.sources[0], [event_listing(channel=channel)])], golf_row(TV="TBC"), TODAY)
         assert d.outcome is Outcome.WRITE, channel
         assert d.fields["TV"] == "Sky Sports"
 
 
 def test_loi_still_flags_an_unmapped_channel():
     """The fallback must not leak to LoI, where vmone vs vmtwo is meaningful."""
-    d = decide(make_sport(), row(), [team_listing(channel="RTÉ2")], TODAY)
+    d = decide(make_sport(), [(make_sport().sources[0], [team_listing(channel="RTÉ2")])], row(), TODAY)
     assert d.outcome is Outcome.FLAG
 
 
@@ -347,14 +358,14 @@ def test_golf_missing_day_is_absent_not_a_date_mismatch():
     sport = golf_sport(date_tolerance_days=0)
     day4 = golf_row(Date="2026-08-23")
     day1 = event_listing(event="Fedex Playoffs BMW Championship", date="2026-08-20")
-    d = decide(sport, day4, [day1], dt.date(2026, 8, 20))
+    d = decide(sport, [(sport.sources[0], [day1])], day4, dt.date(2026, 8, 20))
     assert d.outcome is Outcome.NO_CHANGE
     assert "absent" in d.reason
 
 
 def test_loi_keeps_the_moved_fixture_detection():
     """Tolerance stays non-zero for LoI, where a date shift is a real signal."""
-    d = decide(make_sport(), row(Date="2026-08-09"), [team_listing(date="2026-08-10")], TODAY)
+    d = decide(make_sport(), [(make_sport().sources[0], [team_listing(date="2026-08-10")])], row(Date="2026-08-09"), TODAY)
     assert d.outcome is Outcome.FLAG
     assert "date mismatch" in d.reason
 
@@ -366,9 +377,12 @@ def epl_sport(**overrides) -> SportConfig:
     return make_sport(
         key="epl",
         aliases=["epl", "premier league"],
-        channel_map={},
-        channel_patterns=[("sky sports", "Sky Sports"), ("tnt", "tnt")],
-        ignore_unmatched_channels=True,
+        sources=[make_source(
+            name="footballontv",
+            channel_map={},
+            channel_patterns=[("sky sports", "Sky Sports"), ("tnt", "tnt")],
+            ignore_unmatched_channels=True,
+        )],
         default_tv=None,
         default_tv_max_days=None,
         # Built the way config.py builds it, so the test can't drift from
@@ -400,7 +414,7 @@ def epl_sport(**overrides) -> SportConfig:
     ],
 )
 def test_epl_channel_families_collapse(channel, expected):
-    d = decide(epl_sport(), row(Sport="EPL"), [team_listing(channel=channel)], TODAY)
+    d = decide(epl_sport(), [(epl_sport().sources[0], [team_listing(channel=channel)])], row(Sport="EPL"), TODAY)
     assert d.outcome is Outcome.WRITE
     assert d.fields == {"TV": expected}
 
@@ -408,7 +422,7 @@ def test_epl_channel_families_collapse(channel, expected):
 @pytest.mark.parametrize("channel", ["HBO Max", "Amazon Prime", "Premier Sports 1"])
 def test_epl_untracked_channels_resolve_to_nothing(channel):
     """These get dropped before matching; nothing is written and nothing flagged."""
-    assert resolve_channel(epl_sport(), channel) is None
+    assert resolve_channel(epl_sport().sources[0], channel) is None
 
 
 @pytest.mark.parametrize(
@@ -429,7 +443,7 @@ def test_epl_team_aliases_bridge_abbreviations(airtable_name, source_name):
                                   "TeamB": "Arsenal", "TV": "TBC"}}
     listing = TeamListing(home=source_name, away="Arsenal", date="2026-08-22",
                           time="15:00", channel="Sky Sports Main Event")
-    d = decide(sport, rec, [listing], TODAY)
+    d = decide(sport, [(sport.sources[0], [listing])], rec, TODAY)
     assert d.outcome is Outcome.WRITE
     assert d.fields == {"TV": "Sky Sports"}
 
@@ -437,7 +451,7 @@ def test_epl_team_aliases_bridge_abbreviations(airtable_name, source_name):
 def test_epl_absent_fixture_is_left_alone():
     """No default for EPL: absence just means no channel we track."""
     other = team_listing(home="Chelsea", away="Fulham")
-    d = decide(epl_sport(), row(Sport="EPL"), [other], TODAY)
+    d = decide(epl_sport(), [(epl_sport().sources[0], [other])], row(Sport="EPL"), TODAY)
     assert d.outcome is Outcome.NO_CHANGE
     assert d.fields == {}
 
@@ -446,7 +460,7 @@ def test_epl_sky_and_tnt_on_one_fixture_is_flagged():
     """A genuine conflict still needs a human, not a coin toss."""
     sky = team_listing(channel="Sky Sports Main Event")
     tnt = team_listing(channel="TNT Sports 1")
-    d = decide(epl_sport(), row(Sport="EPL"), [sky, tnt], TODAY)
+    d = decide(epl_sport(), [(epl_sport().sources[0], [sky, tnt])], row(Sport="EPL"), TODAY)
     assert d.outcome is Outcome.FLAG
 
 
@@ -454,6 +468,135 @@ def test_epl_repeated_sky_channels_are_not_a_conflict():
     """One fixture on three Sky channels collapses to a single value."""
     listings = [team_listing(channel=c) for c in
                 ["Sky Sports Main Event", "Sky Sports Premier League", "Sky Sports Ultra HDR"]]
-    d = decide(epl_sport(), row(Sport="EPL"), listings, TODAY)
+    sport = epl_sport()
+    d = decide(sport, [(sport.sources[0], listings)], row(Sport="EPL"), TODAY)
     assert d.outcome is Outcome.WRITE
     assert d.fields == {"TV": "Sky Sports"}
+
+
+# --- multiple sources, tried in priority order ------------------------------
+
+
+def euro_sport(**overrides) -> SportConfig:
+    """UCL/EL shape: Virgin Media first, live-footballontv as the fallback."""
+    return make_sport(
+        key="ucl",
+        aliases=["ucl", "cl", "champions league"],
+        sources=[
+            make_source(
+                name="virginmedia",
+                channel_map={"Channel one": "vmone", "Channel two": "vmtwo"},
+                min_extractions=0,
+            ),
+            make_source(
+                name="footballontv",
+                channel_map={},
+                channel_patterns=[("tnt", "tnt"), ("sky sports", "Sky Sports"),
+                                  ("amazon", "amazon")],
+                ignore_unmatched_channels=True,
+                min_extractions=0,
+            ),
+        ],
+        default_tv=None,
+        default_tv_max_days=None,
+        **overrides,
+    )
+
+
+def euro_row(**fields) -> dict:
+    base = {"FixtureID": "U1", "Date": "2026-08-09", "Sport": "UCL",
+            "TeamA": "Viking", "TeamB": "Dinamo Zagreb", "TV": "TBC"}
+    base.update(fields)
+    return {"id": "recU1", "fields": base}
+
+
+def vm_listing(**overrides) -> TeamListing:
+    base = dict(home="Viking", away="Dinamo Zagreb", date="2026-08-09",
+                time="19:50", channel="Channel two")
+    base.update(overrides)
+    return TeamListing(**base)
+
+
+def fotv_listing(**overrides) -> TeamListing:
+    base = dict(home="VIking FK", away="Dinamo Zagreb", date="2026-08-09",
+                time="20:00", channel="TNT Sports 2")
+    base.update(overrides)
+    return TeamListing(**base)
+
+
+def test_virgin_media_wins_when_both_sources_have_it():
+    """
+    The real case: Viking v Dinamo Zagreb is on Virgin Media Two *and* TNT
+    Sports 2. Free-to-air here, so vmtwo must win.
+    """
+    sport = euro_sport()
+    d = decide(sport, [(sport.sources[0], [vm_listing()]),
+                       (sport.sources[1], [fotv_listing()])], euro_row(), TODAY)
+    assert d.outcome is Outcome.WRITE
+    assert d.fields == {"TV": "vmtwo"}
+
+
+def test_falls_through_to_second_source_when_first_lacks_it():
+    sport = euro_sport()
+    d = decide(sport, [(sport.sources[0], []),
+                       (sport.sources[1], [fotv_listing()])], euro_row(), TODAY)
+    assert d.outcome is Outcome.WRITE
+    assert d.fields == {"TV": "tnt"}
+
+
+@pytest.mark.parametrize(
+    "channel, expected",
+    [("TNT Sports 1", "tnt"), ("TNT Sports 5", "tnt"),
+     ("Sky Sports Main Event", "Sky Sports"), ("Amazon Prime Video", "amazon")],
+)
+def test_fallback_source_channel_rules(channel, expected):
+    sport = euro_sport()
+    d = decide(sport, [(sport.sources[0], []),
+                       (sport.sources[1], [fotv_listing(channel=channel)])],
+               euro_row(), TODAY)
+    assert d.fields == {"TV": expected}
+
+
+def test_untracked_channel_on_fallback_leaves_the_row_alone():
+    sport = euro_sport()
+    d = decide(sport, [(sport.sources[0], []),
+                       (sport.sources[1], [fotv_listing(channel="HBO Max")])],
+               euro_row(), TODAY)
+    # HBO listings are dropped upstream; here the channel simply resolves to
+    # nothing, and with no default the row is left untouched.
+    assert d.outcome in (Outcome.NO_CHANGE, Outcome.FLAG)
+    assert d.fields == {}
+
+
+def test_absent_from_every_source_writes_nothing():
+    sport = euro_sport()
+    d = decide(sport, [(sport.sources[0], []), (sport.sources[1], [])],
+               euro_row(), TODAY)
+    assert d.outcome is Outcome.NO_CHANGE
+    assert d.fields == {}
+
+
+def test_a_flag_from_one_source_survives_another_sources_silence():
+    """A date mismatch is a real signal and must not be lost to a later miss."""
+    sport = euro_sport()
+    moved = vm_listing(date="2026-08-11")
+    d = decide(sport, [(sport.sources[0], [moved]), (sport.sources[1], [])],
+               euro_row(Date="2026-08-09"), TODAY)
+    assert d.outcome is Outcome.FLAG
+    assert "date mismatch" in d.reason
+
+
+def test_already_correct_beats_falling_through():
+    sport = euro_sport()
+    d = decide(sport, [(sport.sources[0], [vm_listing()]),
+                       (sport.sources[1], [fotv_listing()])],
+               euro_row(TV="vmtwo"), TODAY)
+    assert d.outcome is Outcome.NO_CHANGE
+    assert d.fields == {}
+
+
+def test_european_club_suffixes_are_stripped():
+    """'Viking' vs 'VIking FK' scored 0.800 and missed the 0.82 threshold."""
+    assert similarity("Viking", "VIking FK") >= 0.82
+    assert similarity("Mjallby AIF", "Mjallby") >= 0.82
+    assert similarity("Ferencvarosi TC", "Ferencvaros") >= 0.82
