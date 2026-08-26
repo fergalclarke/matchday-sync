@@ -21,7 +21,8 @@ LOCAL_TZ = ZoneInfo("Europe/Dublin")
 
 # Rugby competitions you want to fetch
 RUGBY_ENDPOINTS = [
-    ("/fixtures/1266/2026", "Rugby"),     # International
+    ("/fixtures/30/2026", "Rugby"),     # International Tests
+    ("/fixtures/1266/2026", "Rugby"),   # Six Nations
     ("/fixtures/1464/2026", "Rugby"),   # Champions Cup
     ("/fixtures/1236/2026", "Rugby"),   # URC
 ]
