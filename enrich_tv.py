@@ -72,6 +72,7 @@ def run_sport(
     records: list[dict],
     today: dt.date,
     window_end: dt.date,
+    page_cache: dict[str, str] | None = None,
 ) -> SportReport:
     report = SportReport(key=sport.key)
 
@@ -81,42 +82,56 @@ def run_sport(
         print(f"[INFO] {sport.key}: no candidate fixtures in window, skipping source fetch")
         return report
 
-    try:
-        page_text = fetch_text(
-            sport.source.url, sport.source.max_chars, sport.request_timeout
-        )
-        listings = extract_listings(client, sport, page_text, today, window_end)
-    except (FetchError, ExtractionError) as exc:
-        # A failed source must never reach the matcher. For LoI in particular,
-        # "absent from source" is a positive signal, so an empty listing set from
-        # a broken fetch would stamp every candidate with the default.
-        report.source_ok = False
-        report.error = str(exc)
-        print(f"[ERROR] {sport.key}: {exc}")
-        return report
+    by_source = []
+    for source in sport.sources:
+        label = f"{sport.key}/{source.name}"
+        try:
+            if page_cache is not None and source.url in page_cache:
+                page_text = page_cache[source.url]
+            else:
+                page_text = fetch_text(source.url, source.max_chars, sport.request_timeout)
+                if page_cache is not None:
+                    page_cache[source.url] = page_text
+            listings = extract_listings(client, sport, source, page_text, today, window_end)
+        except (FetchError, ExtractionError) as exc:
+            # A failed source must never reach the matcher. For LoI in
+            # particular, "absent from source" is a positive signal, so an empty
+            # listing set from a broken fetch would stamp every candidate with
+            # the default. With several sources the same reasoning applies to
+            # priority: we cannot conclude "not on Virgin Media" from a fetch
+            # that never succeeded, so the whole sport is skipped rather than
+            # silently falling through to the lower-priority source.
+            report.source_ok = False
+            report.error = f"{source.name}: {exc}"
+            print(f"[ERROR] {label}: {exc}")
+            return report
 
-    if sport.ignore_unmatched_channels:
-        # Drop listings on broadcasters this sport doesn't track (HBO Max,
-        # Amazon Prime) before matching, so a fixture carried only by one of
-        # them reads as "absent" rather than filling the review list. Counted
-        # so a pattern that stops matching shows up in the summary.
-        kept = [l for l in listings if resolve_channel(sport, l.channel) is not None]
-        report.ignored_channels = len(listings) - len(kept)
-        if report.ignored_channels:
-            print(f"[INFO] {sport.key}: ignored {report.ignored_channels} listings on untracked channels")
-        listings = kept
+        if source.ignore_unmatched_channels:
+            # Drop listings on broadcasters this sport doesn't track (HBO Max,
+            # Amazon Prime) before matching, so a fixture carried only by one of
+            # them reads as "absent" rather than filling the review list.
+            # Counted so a pattern that stops matching shows up in the summary.
+            kept = [l for l in listings if resolve_channel(source, l.channel) is not None]
+            ignored = len(listings) - len(kept)
+            report.ignored_channels += ignored
+            if ignored:
+                print(f"[INFO] {label}: ignored {ignored} listings on untracked channels")
+            listings = kept
 
-    if len(listings) < sport.source.min_extractions:
-        report.source_ok = False
-        report.error = (
-            f"only {len(listings)} listings extracted, below min_extractions="
-            f"{sport.source.min_extractions}"
-        )
-        print(f"[ERROR] {sport.key}: {report.error}")
-        return report
+        if len(listings) < source.min_extractions:
+            report.source_ok = False
+            report.error = (
+                f"{source.name}: only {len(listings)} listings extracted, below "
+                f"min_extractions={source.min_extractions}"
+            )
+            print(f"[ERROR] {label}: {report.error}")
+            return report
 
-    report.listings = len(listings)
-    report.decisions = [decide(sport, record, listings, today) for record in candidates]
+        report.listings += len(listings)
+        report.per_source.append((source.name, len(listings)))
+        by_source.append((source, listings))
+
+    report.decisions = [decide(sport, by_source, record, today) for record in candidates]
 
     # Safety rail, same shape as MAX_AIRTABLE_DELETE in the cleanup script. This
     # is what catches a source redesign that still yields plausible-looking
@@ -170,13 +185,18 @@ def main(argv=None) -> int:
 
     try:
         airtable = AirtableClient(api_key, config.base_id, config.table)
-        records = airtable.list_fixtures(today.isoformat(), window_end.isoformat())
+        records = airtable.list_fixtures(today, window_end)
     except AirtableError as exc:
         print(f"[ERROR] {exc}")
         return 2
 
     client = anthropic.Anthropic()
-    reports = [run_sport(client, sport, records, today, window_end) for sport in sports]
+    # The Virgin Media guide is a source for LoI, UCL and EL alike; fetch it once.
+    page_cache: dict[str, str] = {}
+    reports = [
+        run_sport(client, sport, records, today, window_end, page_cache)
+        for sport in sports
+    ]
 
     updates = []
     for report in reports:

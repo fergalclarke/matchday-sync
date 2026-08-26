@@ -14,7 +14,7 @@ schedule.
 | `sync_gaa_to_airtable.py` | `gaa_data/gaa_data/gaa_scrape/matches.json` (spider output) | Reads that JSON, maps competition name → `Gaelic`/`Hurling`/`GAA`, normalises `TV` strings into Airtable codes (`TG4`, `rte2`, `gaaplus`, else `TBC`), prefixes `FixtureID` with `GAA-`, drops anything dated before today, upserts. |
 | `sync_lgfa_to_airtable.py` | Scrapes ladiesgaelic.ie directly with `requests` + `BeautifulSoup` (no Scrapy) | Builds a deterministic `FixtureID` from date+team names, upserts. **Currently not run** — its workflow step is commented out in `sync.yml`. |
 | `cleanup_old_fixtures_airtable.py` | Airtable itself | Deletes any Airtable record where `Date` is before today (Dublin time), with a safety cap (`MAX_AIRTABLE_DELETE`, default 1000) to avoid an accidental full-table wipe. |
-| `enrich_tv.py` + `enrich/` | Virgin Media TV guide (LoI), skysports.com (golf) | Separate daily stage — fills `TV` (and `Time`, for golf) on fixtures in the next 10 days. See "TV enrichment stage" below. |
+| `enrich_tv.py` + `enrich/` | Virgin Media TV guide (LoI, UCL, EL), live-footballontv.com (EPL, UCL, EL), skysports.com (golf) | Separate daily stage — fills `TV` (and `Time`, for golf) on fixtures in the next 10 days. See "TV enrichment stage" below. |
 | `sync_all_sports.py` / `run_all_sports.sh` | — | Legacy **local-only** runners with hardcoded absolute paths (`/Users/fergalclarke/matchday v2`) — not used by CI, presumably for running the sync manually from a laptop/cron. Stale/unmaintained. |
 
 All the Airtable-writing scripts share the same shape: fetch/load → normalise
@@ -66,6 +66,13 @@ reduce to visible text → extract listings with Claude (`claude-haiku-4-5`,
 structured JSON) → fuzzy-match to rows **in code** → write only high-confidence
 results → report everything to the Actions job summary.
 
+`sources` is a **list per sport, tried in order** — the first source that
+actually has the fixture settles it, including when the value is already
+correct. UCL and EL check Virgin Media before live-footballontv, so a game shown
+free-to-air here records `vmtwo` rather than `tnt` even though both list it.
+Channel rules live on the *source*, not the sport, because each page names
+channels its own way (`Channel two` vs `TNT Sports 2`).
+
 Per-sport rules live in `enrichment.yaml`:
 
 - **LoI** — candidates are rows with `TV = "TBC"`. The source lists *terrestrial*
@@ -94,6 +101,14 @@ Per-sport rules live in `enrichment.yaml`:
   aliased. Note `normalise_name` already strips `FC`/`United`/`Utd` as noise,
   so aliases are stored normalised and `Man Utd` → `Manchester United` is
   really `man` → `manchester`.
+- **UCL / EL** — candidates are rows with `TV = "TBC"`. Virgin Media first
+  (`vmone`/`vmtwo`), then the competition's live-footballontv page
+  (`tnt` / `Sky Sports` / `amazon`; everything else ignored). No default.
+  **`sync_fixtures_to_airtable.py` labels league 2 as `UCL`, not `CL`** — both
+  are aliased, since configuring only `cl` would match nothing.
+  The Europa League page often reads "No Upcoming TV Fixtures"; that is normal,
+  not a failure, which is why those sources set `min_extractions: 0`. Safe only
+  because neither sport has a `default_tv` to mass-apply.
 - **Golf** — candidates are *every* Golf row in the window, regardless of current
   `TV`/`Time`. Sky is authoritative, so it overwrites; writes are diff-checked so
   repeat runs are no-ops, and any overwrite of a non-`TBC` value is reported
@@ -107,7 +122,7 @@ Per-sport rules live in `enrichment.yaml`:
   for matching — the date is what separates one round from the next. Golf also
   sets `date_tolerance_days: 0`; see below.
 
-Four things are load-bearing and easy to break:
+Five things are load-bearing and easy to break:
 
 1. **The near-match pass in `enrich/match.py` must run before anything is
    declared absent.** A fixture whose TV pick moved dates fails the exact-date
@@ -122,10 +137,14 @@ Four things are load-bearing and easy to break:
    0.68, under the 0.82 threshold, so **every golf row silently failed to match**
    until containment was added. Any change here wants the parametrised cases in
    `tests/test_match.py` re-run.
-3. **A failed source must never reach the matcher.** Since absence means
+3. **A higher-priority source that fails stops the whole sport.** We cannot
+   conclude "not on Virgin Media" from a fetch that never succeeded, so falling
+   through would write `tnt` over a free-to-air game — and that row then leaves
+   the candidate set for good.
+4. **A failed source must never reach the matcher.** Since absence means
    `loitv` for LoI, an empty listing set from a broken fetch would stamp every
    candidate. Guarded by fetch health checks and `min_extractions`.
-4. **`max_default_writes`** caps how many rows one run may default, mirroring
+5. **`max_default_writes`** caps how many rows one run may default, mirroring
    `MAX_AIRTABLE_DELETE` in the cleanup script. This is what catches a source
    redesign that still yields plausible listings matching nothing.
 

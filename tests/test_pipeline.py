@@ -60,7 +60,9 @@ def install(monkeypatch, records, listings):
     monkeypatch.setattr(
         enrich_tv,
         "extract_listings",
-        lambda client, sport, text, today, end: listings if sport.key == "loi" else [],
+        lambda client, sport, source, text, today, end: (
+            listings if sport.key == "loi" else []
+        ),
     )
     return fake
 

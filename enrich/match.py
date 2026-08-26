@@ -5,13 +5,18 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from enum import Enum
 
-from .config import SportConfig
+from .config import SourceConfig, SportConfig
 
 # Values that mean "nothing meaningful is here yet".
 EMPTY_VALUES = {"", "tbc", "none", "n/a"}
 
 # Dropped before comparing names so "Bohemian FC" matches "Bohemians".
-NOISE_TOKENS = {"fc", "afc", "cf", "sc", "afc", "club", "the", "utd", "united"}
+# Club designators, dropped before comparing names so "Bohemian FC" matches
+# "Bohemians" and "VIking FK" matches "Viking".
+NOISE_TOKENS = {
+    "fc", "afc", "cf", "sc", "sk", "fk", "tc", "aif",
+    "club", "the", "utd", "united",
+}
 
 
 class Outcome(str, Enum):
@@ -35,6 +40,11 @@ class Decision:
     overwrites: list[str] = field(default_factory=list)  # changed fields that held a real value
     confidence: float = 0.0
     source_note: str = ""
+    # True when *this* source actually had the fixture, whatever the outcome.
+    # Distinguishes "the source has it and nothing needs changing" from "the
+    # source doesn't have it" -- only the latter may fall through to a
+    # lower-priority source.
+    found: bool = False
 
     @property
     def writable(self) -> bool:
@@ -84,13 +94,17 @@ def is_empty(value) -> bool:
     return str(value or "").strip().lower() in EMPTY_VALUES
 
 
-def _parse_date(value: str) -> dt.date | None:
+def parse_date(value: str) -> dt.date | None:
+    """ISO date or datetime string -> date. None when unparseable."""
     if not value:
         return None
     try:
         return dt.date.fromisoformat(str(value).split("T", 1)[0])
     except ValueError:
         return None
+
+
+_parse_date = parse_date
 
 
 def canonicalise(sport: SportConfig, value: str) -> str:
@@ -131,7 +145,7 @@ def _time_sort_key(listing):
     return (listing.time is None, listing.time or "")
 
 
-def resolve_channel(sport: SportConfig, raw_channel: str) -> str | None:
+def resolve_channel(source: SourceConfig, raw_channel: str) -> str | None:
     """
     Channel name -> the value to store, tolerant of casing and whitespace.
 
@@ -142,22 +156,20 @@ def resolve_channel(sport: SportConfig, raw_channel: str) -> str | None:
     """
     target = normalise_name(raw_channel)
 
-    for name, slug in sport.channel_map.items():
+    for name, slug in source.channel_map.items():
         if normalise_name(name) == target:
             return slug
 
-    for needle, value in sport.channel_patterns:
+    for needle, value in source.channel_patterns:
         if needle in target:
             return value
 
-    return sport.channel_fallback
+    return source.channel_fallback
 
 
-# Kept as the internal name used elsewhere in this module.
-_resolve_channel = resolve_channel
 
 
-def _build_decision(sport: SportConfig, record: dict, listing, confidence: float) -> Decision:
+def _build_decision(sport: SportConfig, source: SourceConfig, record: dict, listing, confidence: float) -> Decision:
     fields = record.get("fields", {})
     label = _fixture_label(sport, fields)
     row_date = str(fields.get("Date", ""))
@@ -172,10 +184,11 @@ def _build_decision(sport: SportConfig, record: dict, listing, confidence: float
         source_note=f"{_listing_label(sport, listing)} on {listing.channel} ({listing.date})",
     )
 
-    slug = _resolve_channel(sport, listing.channel)
+    slug = resolve_channel(source, listing.channel)
     if slug is None:
         return Decision(
             outcome=Outcome.FLAG,
+            found=True,
             reason=f"channel {listing.channel!r} is not in channel_map",
             **base,
         )
@@ -197,10 +210,13 @@ def _build_decision(sport: SportConfig, record: dict, listing, confidence: float
             overwrites.append(key)
 
     if not changed:
-        return Decision(outcome=Outcome.NO_CHANGE, reason="already correct", **base)
+        return Decision(
+            outcome=Outcome.NO_CHANGE, found=True, reason="already correct", **base
+        )
 
     return Decision(
         outcome=Outcome.WRITE,
+        found=True,
         reason="matched in source",
         fields=changed,
         previous=previous,
@@ -217,9 +233,34 @@ def _fixture_label(sport: SportConfig, fields: dict) -> str:
     return f"{team_a} — {team_b}".strip(" —")
 
 
-def _not_found_decision(
-    sport: SportConfig, record: dict, today: dt.date, near_misses: list
-) -> Decision:
+def _base_fields(sport: SportConfig, record: dict, note: str) -> dict:
+    fields = record.get("fields", {})
+    return dict(
+        record_id=record["id"],
+        fixture_id=str(fields.get("FixtureID", "")),
+        label=_fixture_label(sport, fields),
+        date=str(fields.get("Date", "")),
+        sport_key=sport.key,
+        confidence=0.0,
+        source_note=note,
+    )
+
+
+def _absent(sport: SportConfig, record: dict) -> Decision:
+    """
+    Not in *this* source. Deliberately does not apply the sport's default --
+    with several sources that call can only be made once every one has been
+    tried, so it lives in decide() instead.
+    """
+    return Decision(
+        outcome=Outcome.NO_CHANGE,
+        reason="absent from source",
+        **_base_fields(sport, record, "not present in source"),
+    )
+
+
+def _default_decision(sport: SportConfig, record: dict, today: dt.date) -> Decision:
+    """Every source has been tried and none had it. Apply the default, if any."""
     fields = record.get("fields", {})
     row_date = _parse_date(fields.get("Date"))
     base = dict(
@@ -262,7 +303,53 @@ def _not_found_decision(
     )
 
 
-def decide(sport: SportConfig, record: dict, listings: list, today: dt.date) -> Decision:
+# Ranked worst-to-best, so a later source's finding can replace an earlier
+# source's silence but never the other way round.
+_OUTCOME_RANK = {Outcome.NO_CHANGE: 0, Outcome.FLAG: 1, Outcome.DEFAULT: 2, Outcome.WRITE: 3}
+
+
+def decide(
+    sport: SportConfig,
+    listings_by_source: list[tuple[SourceConfig, list]],
+    record: dict,
+    today: dt.date,
+) -> Decision:
+    """
+    One Airtable row -> one Decision, across every source for the sport.
+
+    Sources are tried in configured order and the first confident match wins:
+    UCL checks Virgin Media before live-footballontv, so a game shown
+    free-to-air here is recorded as vmone/vmtwo rather than tnt even though
+    both list it.
+
+    A source that merely doesn't have the fixture falls through quietly. A
+    source that has something to say but not confidently -- an ambiguous match,
+    a date that moved -- is kept and reported if nothing better turns up, so a
+    real signal is never lost to a later source's silence.
+    """
+    best = None
+    for source, listings in listings_by_source:
+        decision = decide_in_source(sport, source, record, listings, today)
+        if decision.found:
+            # This source has the fixture, so it settles the answer -- including
+            # when the value is already correct. Without this a row correctly
+            # reading `vmtwo` from Virgin Media would be overwritten with `tnt`
+            # by the fallback source, which also lists the same game.
+            return decision
+        if best is None or _OUTCOME_RANK[decision.outcome] > _OUTCOME_RANK[best.outcome]:
+            best = decision
+
+    # No source had it outright. A near-match (moved date, ambiguity) is still
+    # a real signal and is reported rather than being lost to the default.
+    if best is not None and best.outcome is Outcome.FLAG:
+        return best
+
+    return _default_decision(sport, record, today)
+
+
+def decide_in_source(
+    sport: SportConfig, source: SourceConfig, record: dict, listings: list, today: dt.date
+) -> Decision:
     """
     One Airtable row -> one Decision.
 
@@ -282,13 +369,13 @@ def decide(sport: SportConfig, record: dict, listings: list, today: dt.date) -> 
     candidates = [(s, l) for s, l in scored if s >= sport.name_match_threshold]
 
     if not candidates:
-        return _not_found_decision(sport, record, today, near_misses=[])
+        return _absent(sport, record)
 
     exact = [(s, l) for s, l in candidates if _parse_date(l.date) == row_date]
 
     if exact:
         if len(exact) > 1:
-            resolved = _resolve_multiple(sport, exact)
+            resolved = _resolve_multiple(sport, source, exact)
             if resolved is None:
                 best_score, _ = exact[0]
                 return Decision(
@@ -308,7 +395,7 @@ def decide(sport: SportConfig, record: dict, listings: list, today: dt.date) -> 
         else:
             score, listing = exact[0]
 
-        return _build_decision(sport, record, listing, score)
+        return _build_decision(sport, source, record, listing, score)
 
     # Name matched, date didn't. Inside the tolerance window this is the
     # moved-fixture case -- report it, never write it.
@@ -336,10 +423,10 @@ def decide(sport: SportConfig, record: dict, listings: list, today: dt.date) -> 
                 source_note=f"{_listing_label(sport, listing)} on {listing.channel}",
             )
 
-    return _not_found_decision(sport, record, today, near_misses=candidates)
+    return _absent(sport, record)
 
 
-def _resolve_multiple(sport: SportConfig, exact: list):
+def _resolve_multiple(sport: SportConfig, source: SourceConfig, exact: list):
     """
     Several listings match the same row on the same date.
 
@@ -347,7 +434,7 @@ def _resolve_multiple(sport: SportConfig, exact: list):
     times in a day) or when they all agree anyway. Otherwise it's ambiguous and
     the caller flags it.
     """
-    channels = {_resolve_channel(sport, l.channel) or l.channel for _, l in exact}
+    channels = {resolve_channel(source, l.channel) or l.channel for _, l in exact}
 
     if sport.tie_break == "earliest_time":
         return min(exact, key=lambda pair: _time_sort_key(pair[1]))
