@@ -23,8 +23,8 @@ LOCAL_TZ = ZoneInfo("Europe/Dublin")
 RUGBY_ENDPOINTS = [
     ("/fixtures/30/2026", "Rugby"),     # International Tests
     ("/fixtures/1266/2026", "Rugby"),   # Six Nations
-    ("/fixtures/1464/2026", "Rugby"),   # Champions Cup
-    ("/fixtures/1236/2026", "Rugby"),   # URC
+    ("/fixtures/1464/2027", "Rugby"),   # Champions Cup
+    ("/fixtures/1236/2027", "Rugby"),   # URC
 ]
 
 
