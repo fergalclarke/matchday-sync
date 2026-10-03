@@ -2,10 +2,10 @@ name: TV Enrichment
 
 on:
   schedule:
-    # GitHub cron is UTC-only and Ireland shifts twice a year, so both slots fire
-    # and enrich_tv.py drops whichever one isn't 09:00 Europe/Dublin.
-    - cron: "0 8 * * *"    # 09:00 IST (summer)
-    - cron: "0 9 * * *"    # 09:00 GMT (winter)
+    # One slot, UTC: 08:23 Dublin in summer, 07:23 in winter. GitHub starts
+    # scheduled runs late (hours, at the top of the hour), so the exact local
+    # time isn't achievable anyway -- don't gate on it in enrich_tv.py.
+    - cron: "23 7 * * *"
   workflow_run:
     workflows: ["Matchday Fixture Sync"]
     types: [completed]

@@ -25,7 +25,6 @@ from enrich.match import Decision, Outcome, decide, resolve_channel, selectable
 from enrich.report import SportReport, build_summary, emit
 
 LOCAL_TZ = ZoneInfo("Europe/Dublin")
-TARGET_LOCAL_HOUR = 9
 
 
 def parse_args(argv=None):
@@ -43,27 +42,6 @@ def parse_args(argv=None):
         help="Only run this sport (repeatable). Defaults to all configured sports.",
     )
     return parser.parse_args(argv)
-
-
-def should_run_now() -> bool:
-    """
-    GitHub cron is UTC-only and Ireland shifts twice a year, so the workflow
-    fires at both 08:00 and 09:00 UTC and this guard drops whichever run isn't
-    09:00 local. Only applies to scheduled runs -- manual and chained runs
-    should fire whenever they're triggered.
-    """
-    if os.getenv("GITHUB_EVENT_NAME") != "schedule":
-        return True
-
-    local_hour = dt.datetime.now(LOCAL_TZ).hour
-    if local_hour == TARGET_LOCAL_HOUR:
-        return True
-
-    print(
-        f"[INFO] Local time is {local_hour:02d}:xx Europe/Dublin; "
-        f"this run is the off-season duplicate of the {TARGET_LOCAL_HOUR:02d}:00 slot. Exiting."
-    )
-    return False
 
 
 def run_sport(
@@ -154,9 +132,6 @@ def run_sport(
 
 def main(argv=None) -> int:
     args = parse_args(argv)
-
-    if not should_run_now():
-        return 0
 
     try:
         config = load_config(args.config)

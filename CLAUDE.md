@@ -58,7 +58,7 @@ follows the same pattern for the football/rugby fetches, sent as
 ## TV enrichment stage
 
 Separate from the weekly sync: `.github/workflows/enrich-tv.yml` runs daily at
-09:00 Europe/Dublin, and again whenever **Matchday Fixture Sync** completes
+07:23 UTC (GitHub may start it hours late), and again whenever **Matchday Fixture Sync** completes
 successfully. All behaviour is driven by `enrichment.yaml`.
 
 Flow: select candidate rows from Airtable → fetch the sport's source page →

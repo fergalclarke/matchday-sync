@@ -48,7 +48,6 @@ def loi_row(rec_id, team_a, team_b, days_out=2, tv="TBC"):
 def env(monkeypatch):
     monkeypatch.setenv("AIRTABLE_API_KEY", "pat-test")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
-    monkeypatch.delenv("GITHUB_EVENT_NAME", raising=False)
     monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
     monkeypatch.setattr(enrich_tv.anthropic, "Anthropic", lambda *a, **k: object())
     monkeypatch.setattr(enrich_tv, "fetch_text", lambda *a, **k: "page text")
